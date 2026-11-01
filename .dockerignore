@@ -1,0 +1,11 @@
+.git
+.github
+data
+*.duckdb*
+__pycache__
+.pytest_cache
+firmware
+tests
+docs
+.venv
+.env
