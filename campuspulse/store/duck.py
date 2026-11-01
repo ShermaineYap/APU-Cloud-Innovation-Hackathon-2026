@@ -67,4 +67,4 @@ class DuckStore(Store):
 
     def reading_count(self) -> int:
         with self.lock:
-            return int(self.con.execute("SELECT COUNT(*) FROM readings").fetchone()[0])
+            return int(self.con.execute("SELECT COUNT(*) FROM readings").fetchall()[0][0])
