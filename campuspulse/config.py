@@ -11,6 +11,28 @@ from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo
 
 
+def _load_dotenv(path: str = ".env") -> None:
+    """Load KEY=value lines from .env into the environment.
+
+    Variables already set in the shell win, so Cloud Run and CI are unaffected.
+    """
+    if not os.path.isfile(path):
+        return
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.removeprefix("export ").strip()
+            value = value.strip().strip('"').strip("'")
+            if key and value and key not in os.environ:
+                os.environ[key] = value
+
+
+_load_dotenv(os.getenv("CP_ENV_FILE", ".env"))
+
+
 def _bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
