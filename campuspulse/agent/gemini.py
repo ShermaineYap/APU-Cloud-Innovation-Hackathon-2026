@@ -83,11 +83,17 @@ def _fallback_brief(actions: list[dict], kpis: dict) -> dict:
                  "air_quality": "Raise fresh-air supply now; propose the room change to timetabling.",
                  "data_reliability": "Book a technician visit before acting on this room's data."}[a["kind"]]
         items.append({"id": a["id"], "why_now": a["summary"], "first_step": first})
+    lead = top[0] if top else None
+    saving = sum(max(a["rm_per_week"], 0) for a in top)
+    headline = (f"Empty rooms took {kpis['wasted_share'] * 100:.0f}% of this week's cooling energy"
+                if kpis.get("wasted_share") else "No major waste found this week")
+    summary = (f"The top {len(top)} changes are worth about RM {saving:,.0f} a week; start with "
+               f"“{lead['title']}”." if lead else "")
+    if kpis.get("low_confidence_nodes"):
+        summary += f" {kpis['low_confidence_nodes']} sensor node(s) need a fix before their rooms' data is trusted."
     return {
-        "headline": f"{kpis['wasted_kwh']:.0f} kWh went to cooling empty rooms in the last 7 days",
-        "summary": (f"That is about RM {kpis['wasted_rm']:,.0f} at RM {kpis['tariff_rm_per_kwh']}/kWh. "
-                    f"{kpis['stale_air_hours']} occupied room-hours had CO2 above the limit, and "
-                    f"{kpis['low_confidence_nodes']} sensor node(s) need attention before their data is trusted."),
+        "headline": headline,
+        "summary": summary.strip(),
         "items": items,
         "source": "template (Gemini not configured)",
     }
@@ -141,11 +147,24 @@ def _offline_answer(store: Store, question: str) -> dict:
         return {"answer": "Offline mode answers only the suggested questions. Add a Gemini key to ask anything.",
                 "sql": None, "rows": [], "chart": None, "source": "offline"}
     sql, rows = _run(store, c["sql"])
-    first = rows[0] if rows else {}
-    lead = ", ".join(f"{k} {v}" for k, v in list(first.items())[:4])
-    return {"answer": f"Matched the tested question “{c['q']}”. Top row: {lead}." if rows else "No rows matched.",
+    return {"answer": _describe(rows) if rows else "No rows matched that question in the current data.",
             "sql": sql, "rows": rows, "chart": chart_for(rows), "source": "offline (tested query)",
             "matched": c["q"]}
+
+
+def _describe(rows: list[dict]) -> str:
+    """One plain sentence about the first row, for offline mode."""
+    first = rows[0]
+    text = [k for k, v in first.items() if isinstance(v, str)]
+    nums = [k for k, v in first.items() if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    name = first.get("room_name") or first.get("name") or first.get("module") or (
+        f"Block {first['block']}" if first.get("block") else None)
+    label = f"{name} ({first['room_id']})" if name and first.get("room_id") else (
+        name or (first[text[0]] if text else "The result"))
+    facts = ", ".join(f"{first[k]:,} {k.replace('_', ' ')}" if isinstance(first[k], int)
+                      else f"{first[k]:,.2f} {k.replace('_', ' ')}" for k in nums[:3])
+    more = f" {len(rows) - 1} more row(s) below." if len(rows) > 1 else ""
+    return f"{label} comes first: {facts}.{more}" if facts else f"{len(rows)} row(s) found.{more}"
 
 
 def ask(store: Store, question: str) -> dict:

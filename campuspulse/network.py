@@ -63,14 +63,16 @@ def link_health(store: Store, hours: int = 24) -> list[LinkHealth]:
                SAFE_DIVIDE(SUM(packets_acked), SUM(packets_sent)) AS delivery_ratio,
                AVG(rssi_dbm) AS avg_rssi_dbm,
                TIMESTAMP_DIFF((SELECT MAX(ts) FROM readings), MAX(ts), SECOND) / 60.0 AS minutes_since_seen,
-               COUNT(DISTINCT ROUND(co2_ppm)) AS distinct_co2
+               COUNT(DISTINCT ROUND(co2_ppm)) AS distinct_co2, COUNT(*) AS reports
         FROM w GROUP BY device_id
     """)
     out = []
     for r in df.itertuples():
         delivery = float(r.delivery_ratio) if pd.notna(r.delivery_ratio) else 0.0
         rssi = float(r.avg_rssi_dbm) if pd.notna(r.avg_rssi_dbm) else -100.0
-        conf, issues = _score(delivery, rssi, float(r.minutes_since_seen), int(r.distinct_co2))
+        # A stuck-sensor verdict needs enough samples; a node that just joined is not stuck.
+        distinct = int(r.distinct_co2) if int(r.reports) >= 12 else 99
+        conf, issues = _score(delivery, rssi, float(r.minutes_since_seen), distinct)
         level = "high" if conf >= 80 else "medium" if conf >= 55 else "low"
         out.append(LinkHealth(r.device_id, r.room_id, r.gateway_id, bool(r.simulated), round(delivery, 3),
                               round(rssi, 1), round(float(r.minutes_since_seen), 1), int(r.distinct_co2),
