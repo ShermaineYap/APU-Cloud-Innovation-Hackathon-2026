@@ -50,8 +50,8 @@ Locally the same BigQuery SQL runs on DuckDB, transpiled by sqlglot, so the whol
 ## Run it locally (2 minutes)
 
 ```bash
-pip install -r requirements.txt
-uvicorn campuspulse.api:app --port 8080
+python -m pip install -r requirements.txt
+python -m uvicorn campuspulse.api:app --port 8080
 # open http://localhost:8080
 ```
 
