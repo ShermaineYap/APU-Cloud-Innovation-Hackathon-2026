@@ -99,6 +99,18 @@ def _fallback_brief(actions: list[dict], kpis: dict) -> dict:
     }
 
 
+
+def _why(e: Exception) -> str:
+    """Short, key-free reason for a Gemini failure, shown in the UI."""
+    code = getattr(e, "code", None)
+    status = getattr(e, "status", None)
+    hints = {400: "check the API key", 401: "check the API key", 403: "key not allowed for this API",
+             404: "model name not found", 429: "quota or rate limit reached"}
+    if code:
+        hint = hints.get(code, "")
+        return f"{code} {status or ''}".strip() + (f", {hint}" if hint else "")
+    return type(e).__name__
+
 def daily_brief(actions: list[dict], kpis: dict) -> dict:
     if not settings.gemini_enabled:
         return _fallback_brief(actions, kpis)
@@ -122,7 +134,7 @@ def daily_brief(actions: list[dict], kpis: dict) -> dict:
     except Exception as e:  # never let the brief take the page down
         log.warning("Gemini brief failed: %s", e)
         out = _fallback_brief(actions, kpis)
-        out["source"] = f"template (Gemini error: {type(e).__name__})"
+        out["source"] = f"template (Gemini error: {_why(e)})"
         return out
 
 
@@ -212,7 +224,7 @@ def ask(store: Store, question: str) -> dict:
     except Exception as e:
         log.warning("Gemini ask failed: %s", e)
         out = _offline_answer(store, question)
-        out["source"] = f"offline fallback (Gemini error: {type(e).__name__})"
+        out["source"] = f"offline fallback (Gemini error: {_why(e)})"
         return out
 
 
