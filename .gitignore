@@ -9,3 +9,6 @@ venv/
 .pytest_cache/
 .DS_Store
 firmware/**/secrets.h
+
+# YOLO weights download on first run of the edge camera
+*.pt
