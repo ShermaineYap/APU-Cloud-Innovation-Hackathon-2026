@@ -48,6 +48,19 @@ Locally the same BigQuery SQL runs on DuckDB, transpiled by sqlglot, so the whol
 - **Simulated:** sensor readings for the other rooms, 28 days at 5-minute intervals, labelled `simulated = true` everywhere. The simulator follows the real timetable and uses a CO₂ mass balance, a thermal model and AC load. On top of what the real timetable produces (small classes in auditoriums, crowded shared sessions, cooling between classes), it plants Friday-afternoon no-shows, weekend AC left on in Auditorium 2, a weak link in Tech Lab 7-01, a stuck CO₂ sensor in Tech Lab 4-02 and a four-hour Tech Lab gateway outage. The tests check that the engine finds every one of them without being told.
 - **Assumptions:** APU does not publish room capacities, AC loads or enrolment, so seats (auditoriums 120–200, classrooms 50, Tech Labs 40) and AC loads are estimates, and class size is estimated as 12 students per intake sharing a session, capped at the room's seats. Energy price `CP_TARIFF_RM_PER_KWH` defaults to RM 0.50/kWh; set it from the current TNB commercial tariff before presenting. All of these live in `campuspulse/campus.py` and `.env`, ready to replace with Estates data.
 
+## How robust is the auditorium finding?
+
+Class size is the one estimate the room moves depend on, so we stress-tested it against APU's real timetable for the week (91 auditorium classes):
+
+| Assumed students per intake | Auditorium classes under 35% full |
+| --- | --- |
+| 12 (our default) | 46 |
+| 20 | 36 |
+| 30 | 23 |
+| 40 | 14 |
+
+The finding does not depend on the estimate: **34 of the 91 auditorium classes are for one or two intakes in APU's own timetable, and 14 are for a single intake.** When Facilities shares real seat counts or AC loads, put them in `campuspulse/data/room_overrides.csv` (copy the `.example.csv`) and restart; nothing else changes.
+
 ## Run it locally (2 minutes)
 
 ```bash

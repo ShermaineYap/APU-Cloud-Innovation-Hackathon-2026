@@ -76,9 +76,23 @@ _SPEC = [
 ]
 
 
+def _overrides() -> dict[str, dict]:
+    """Optional real figures from Facilities: campuspulse/data/room_overrides.csv
+    with columns room_id,capacity,ac_kw (either value may be blank)."""
+    path = os.getenv("CP_ROOM_OVERRIDES", os.path.join(os.path.dirname(__file__), "data", "room_overrides.csv"))
+    if not os.path.isfile(path):
+        return {}
+    import csv
+    with open(path, encoding="utf-8") as fh:
+        return {r["room_id"].strip(): r for r in csv.DictReader(fh) if r.get("room_id")}
+
+
 def _rooms() -> list[Room]:
-    out, pos = [], {}
+    out, pos, real = [], {}, _overrides()
     for rid, name, block, floor, kind, cap, ac, apu in _SPEC:
+        o = real.get(rid, {})
+        cap = int(o["capacity"]) if (o.get("capacity") or "").strip() else cap
+        ac = float(o["ac_kw"]) if (o.get("ac_kw") or "").strip() else ac
         i = pos.get(block, 0)
         pos[block] = i + 1
         out.append(Room(rid, name, block, floor, kind, cap, ac, f"gw-{block.lower()}", i % 4, i // 4, apu))

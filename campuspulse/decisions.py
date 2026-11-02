@@ -163,7 +163,8 @@ def right_size_rooms(store: Store) -> list[Action]:
         moves.append({"block": room.block, "module": s.module, "room_id": s.room_id, "day": DAYS[s.weekday],
                       "time": slot.time_label, "seats": room.capacity, "avg_people": round(s.avg_people, 1),
                       "peak_people": int(s.max_people), "move_to": alt,
-                      "move_to_seats": ROOM_BY_ID[alt].capacity, "kwh_saved": round(saved, 1)})
+                      "move_to_seats": ROOM_BY_ID[alt].capacity, "intakes": slot.intakes,
+                      "kwh_saved": round(saved, 1)})
     acts = []
     for block in sorted({m["block"] for m in moves}):
         rows = sorted((m for m in moves if m["block"] == block), key=lambda m: -m["kwh_saved"])
@@ -177,7 +178,8 @@ def right_size_rooms(store: Store) -> list[Action]:
             kind="right_size",
             title=(f"Move {len(rows)} small classes out of the auditoriums" if block == "AUD"
                    else f"Move {len(rows)} small classes out of {label} rooms"),
-            summary=(f"{len(rows)} timetabled classes a week fill only {fill:.0%} of their {label} seats. "
+            summary=(f"{len(rows)} timetabled classes a week fill only {fill:.0%} of their {label} seats; "
+                     f"{sum(m['intakes'] <= 2 for m in rows)} of them are for one or two intakes in APU's timetable. "
                      f"Each fits a smaller free room with 15% headroom; for example {top['module']} "
                      f"({top['day']} {top['time']}, about {top['avg_people']:.0f} people in {top['room_id']}) "
                      f"fits {top['move_to']}."),
