@@ -18,7 +18,7 @@ SELECT
   AVG(r.co2_ppm) AS avg_co2_ppm,
   MAX(r.co2_ppm) AS max_co2_ppm,
   AVG(r.temp_c) AS avg_temp_c,
-  AVG(IF(r.ac_on, 1.0, 0.0)) AS ac_on_frac,
+  AVG(IF(r.ac_on IS NULL, NULL, IF(r.ac_on, 1.0, 0.0))) AS ac_on_frac,  -- cameras report no AC state
   AVG(r.watts) / 1000.0 AS kwh,  -- mean kW over one hour = kWh for that hour
   SAFE_DIVIDE(AVG(r.people), ANY_VALUE(rm.capacity)) AS utilisation,
   LOGICAL_AND(r.simulated) AS simulated

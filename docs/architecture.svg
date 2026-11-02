@@ -11,13 +11,14 @@
     <!-- IoT -->
     <rect x="32" y="72" width="200" height="200" rx="4" fill="#F4F5F2" stroke="#1D2A30" stroke-width="2"/>
     <text x="48" y="100" font-size="17" font-weight="600">IoT · sense</text>
-    <text x="48" y="126">ESP32 node in B-08-05</text>
-    <text x="48" y="146">PIR motion</text>
-    <text x="48" y="166">SCD40 CO₂, temp, humidity</text>
-    <text x="48" y="186">Current clamp: watts</text>
-    <text x="48" y="206">RSSI, reports sent / acked</text>
-    <text x="48" y="236" fill="#5C6B71">+ 20 real APU rooms, real</text>
-    <text x="48" y="254" fill="#5C6B71">timetable, simulated sensors</text>
+    <text x="48" y="122">ESP32 node in B-08-05</text>
+    <text x="48" y="140">PIR motion, current clamp</text>
+    <text x="48" y="158">SCD40 CO₂, temp, humidity</text>
+    <text x="48" y="176">RSSI, reports sent / acked</text>
+    <text x="48" y="198" font-weight="600">Camera + YOLO26 on device:</text>
+    <text x="48" y="216">head count only, no images</text>
+    <text x="48" y="242" fill="#5C6B71">+ 20 real APU rooms, real</text>
+    <text x="48" y="260" fill="#5C6B71">timetable, simulated sensors</text>
 
     <!-- Network -->
     <rect x="272" y="72" width="200" height="200" rx="4" fill="#F4F5F2" stroke="#1D2A30" stroke-width="2"/>

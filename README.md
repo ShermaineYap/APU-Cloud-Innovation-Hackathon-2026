@@ -24,6 +24,10 @@ CampusPulse runs on **APU's real teaching week**: 20 real rooms (Auditoriums 1�
 2. **What to change.** Five detectors find after-hours cooling, schedule-driven cooling of empty rooms, oversized room bookings, stale air (CO₂ over 1000 ppm) and unreliable data. Every action carries its kWh and ringgit impact, a confidence score, a chart, the rows and the exact SQL behind it. Approve or dismiss, and the decision is logged to BigQuery.
 3. **Ask the data.** Plain-English questions become BigQuery SQL through Gemini function calling. A read-only guard allows one SELECT over curated views; errors go back to Gemini to fix. The answer shows the SQL, the table and a chart.
 4. **Network-aware confidence.** Each node's delivery ratio (MQTT QoS 1 acknowledgements), signal strength, freshness and a stuck-sensor check become a 0–100 score. Every recommendation inherits the confidence of the rooms it touches, so a decision resting on a weak link says so.
+5. **Edge AI head count.** A camera next to the room runs YOLO26 on the device and sends only the number of people, never an image. It replaces the motion sensor's guess with a real count, so "booked for 60, 9 here" becomes measured rather than estimated.
+6. **What if.** Press *What if* on any change, or approve it, and the week is recalculated on the spot: kWh and ringgit saved, and how far empty-room cooling falls. The rooms involved are outlined on the floor plan.
+7. **Estates report.** One-page PDF of the week's brief, ranked changes, decisions and data caveats, ready to email to Facilities (`/api/report.pdf`).
+8. **Charts that explain themselves.** Each evidence chart gets a one-line caption from Gemini, written only from the chart's own numbers.
 
 ## Cloud, IoT and network, converged
 
@@ -47,6 +51,22 @@ Locally the same BigQuery SQL runs on DuckDB, transpiled by sqlglot, so the whol
 - **Real, our sensor:** one ESP32 node in B-08-05 (`device_id esp32-b0805`, change with `CP_LIVE_ROOM`), its readings stored with `simulated = false`. When it reports, it replaces its simulated twin on the floor plan, marked "live".
 - **Simulated:** sensor readings for the other rooms, 28 days at 5-minute intervals, labelled `simulated = true` everywhere. The simulator follows the real timetable and uses a CO₂ mass balance, a thermal model and AC load. On top of what the real timetable produces (small classes in auditoriums, crowded shared sessions, cooling between classes), it plants Friday-afternoon no-shows, weekend AC left on in Auditorium 2, a weak link in Tech Lab 7-01, a stuck CO₂ sensor in Tech Lab 4-02 and a four-hour Tech Lab gateway outage. The tests check that the engine finds every one of them without being told.
 - **Assumptions:** APU does not publish room capacities, AC loads or enrolment, so seats (auditoriums 120–200, classrooms 50, Tech Labs 40) and AC loads are estimates, and class size is estimated as 12 students per intake sharing a session, capped at the room's seats. Energy price `CP_TARIFF_RM_PER_KWH` defaults to RM 0.50/kWh; set it from the current TNB commercial tariff before presenting. All of these live in `campuspulse/campus.py` and `.env`, ready to replace with Estates data.
+
+## Edge camera: count people with YOLO (optional)
+
+The camera node lives in `edge/` and is installed separately, so the main app stays light and MIT-licensed (Ultralytics is AGPL-3.0).
+
+```bash
+python -m pip install -r edge/requirements.txt
+python edge/people_counter.py --room B-08-05 --show      # Mac webcam, local preview window
+```
+
+- **Privacy by design:** frames are processed on the device and never saved or sent. Only `{room, people}` goes to `/api/ingest`. The preview window (`--show`) is local.
+- **A phone as the camera:** run an IP-camera app on the phone and pass its stream, e.g. `--source http://192.168.1.23:8080/video`.
+- **Deployed app:** add `--server https://<your-cloud-run-url> --key <CP_INGEST_KEY>`.
+- **Network-aware:** reports that fail are queued and retried; each report says how many attempts it took, so the camera gets its own delivery score in *Can we trust the data?*.
+- **Test without a camera:** `python edge/people_counter.py --image photo.jpg --save boxes.jpg`.
+- On a Mac, the first run asks for camera permission for your terminal (System Settings → Privacy & Security → Camera). The YOLO26 nano weights (about 5 MB) download on first run.
 
 ## How robust is the auditorium finding?
 
@@ -95,8 +115,9 @@ campuspulse/data/   APU timetable snapshot (public feed, no lecturer data)
 bigquery/           schema, curated views, BigQuery ML
 web/static/         dashboard
 firmware/           ESP32 node (MQTT QoS 1 or HTTPS)
+edge/               YOLO people counter (camera node, optional)
 deploy/, scripts/   Cloud Run deploy, BigQuery setup
-tests/              27 tests: guard, engine finds planted problems, API, Gemini loop with a fake model
+tests/              29 tests: guard, engine finds planted problems, API, camera ingest, report, Gemini loop
 ```
 
 ## API
@@ -111,6 +132,8 @@ tests/              27 tests: guard, engine finds planted problems, API, Gemini 
 | GET | `/api/rooms/{id}` | 48 h history, 24 h forecast, anomalies |
 | GET | `/api/network` | Node confidence and gateway outages |
 | POST | `/api/ask` | Ask the data |
+| GET | `/api/actions/{id}/caption` | One-line chart caption |
+| GET | `/api/report.pdf` | One-page Estates report |
 
 ## Tests
 

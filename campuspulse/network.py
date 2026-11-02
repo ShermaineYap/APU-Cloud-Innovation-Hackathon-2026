@@ -14,6 +14,12 @@ import pandas as pd
 from .store import Store
 
 STALE_AFTER_MIN = 15
+CAMERA_PREFIX = "cam-"
+
+
+def is_camera(device_id: str) -> bool:
+    """Camera nodes count people at the edge; they send no CO2, temperature or signal strength."""
+    return str(device_id).startswith(CAMERA_PREFIX)
 
 
 @dataclass
@@ -23,7 +29,7 @@ class LinkHealth:
     gateway_id: str
     simulated: bool
     delivery_ratio: float
-    avg_rssi_dbm: float
+    avg_rssi_dbm: float | None
     minutes_since_seen: float
     distinct_co2_values: int
     confidence: int
@@ -34,13 +40,13 @@ class LinkHealth:
         return asdict(self)
 
 
-def _score(delivery: float, rssi: float, age_min: float, distinct: int) -> tuple[int, list[str]]:
+def _score(delivery: float, rssi: float | None, age_min: float, distinct: int) -> tuple[int, list[str]]:
     issues: list[str] = []
     score = 100.0
     if delivery < 0.97:
         score -= min(45, (0.97 - delivery) * 220)
         issues.append(f"{(1 - delivery) * 100:.0f}% of reports lost")
-    if rssi < -80:
+    if rssi is not None and rssi < -80:
         score -= min(25, (-80 - rssi) * 2.5)
         issues.append(f"weak signal ({rssi:.0f} dBm)")
     if age_min > STALE_AFTER_MIN:
@@ -63,19 +69,21 @@ def link_health(store: Store, hours: int = 24) -> list[LinkHealth]:
                SAFE_DIVIDE(SUM(packets_acked), SUM(packets_sent)) AS delivery_ratio,
                AVG(rssi_dbm) AS avg_rssi_dbm,
                TIMESTAMP_DIFF((SELECT MAX(ts) FROM readings), MAX(ts), SECOND) / 60.0 AS minutes_since_seen,
-               COUNT(DISTINCT ROUND(co2_ppm)) AS distinct_co2, COUNT(*) AS reports
+               COUNT(DISTINCT ROUND(co2_ppm)) AS distinct_co2, COUNT(co2_ppm) AS co2_reports, COUNT(*) AS reports
         FROM w GROUP BY device_id
     """)
     out = []
     for r in df.itertuples():
         delivery = float(r.delivery_ratio) if pd.notna(r.delivery_ratio) else 0.0
-        rssi = float(r.avg_rssi_dbm) if pd.notna(r.avg_rssi_dbm) else -100.0
-        # A stuck-sensor verdict needs enough samples; a node that just joined is not stuck.
-        distinct = int(r.distinct_co2) if int(r.reports) >= 12 else 99
+        camera = is_camera(r.device_id)
+        rssi = float(r.avg_rssi_dbm) if pd.notna(r.avg_rssi_dbm) else (None if camera else -100.0)
+        # A stuck-sensor verdict needs enough CO2 samples; a node that just joined is not stuck.
+        distinct = int(r.distinct_co2) if int(r.co2_reports) >= 12 else 99
         conf, issues = _score(delivery, rssi, float(r.minutes_since_seen), distinct)
         level = "high" if conf >= 80 else "medium" if conf >= 55 else "low"
         out.append(LinkHealth(r.device_id, r.room_id, r.gateway_id, bool(r.simulated), round(delivery, 3),
-                              round(rssi, 1), round(float(r.minutes_since_seen), 1), int(r.distinct_co2),
+                              round(rssi, 1) if rssi is not None else None,
+                              round(float(r.minutes_since_seen), 1), int(r.distinct_co2),
                               conf, level, issues))
     return sorted(out, key=lambda x: x.confidence)
 
@@ -84,6 +92,8 @@ def room_confidence(health: list[LinkHealth]) -> dict[str, LinkHealth]:
     """Best available device per room (a live real node beats its simulated twin)."""
     best: dict[str, LinkHealth] = {}
     for h in health:
+        if is_camera(h.device_id):
+            continue  # cameras add a head count; the room's air and energy data still come from its sensor
         cur = best.get(h.room_id)
         fresher_real = not h.simulated and h.minutes_since_seen <= STALE_AFTER_MIN
         if cur is None or fresher_real or (cur.simulated == h.simulated and h.confidence > cur.confidence):

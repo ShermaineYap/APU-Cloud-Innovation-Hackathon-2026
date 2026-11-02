@@ -18,6 +18,7 @@
       <span>CampusPulse</span>
     </div>
     <div class="status" id="status" aria-live="polite">Connecting…</div>
+    <a class="ghost" id="report" href="/api/report.pdf" download>Estates report (PDF)</a>
     <button class="ghost" id="refresh" type="button">Refresh brief</button>
   </header>
 
@@ -51,6 +52,7 @@
           <h2 id="actions-title">What to change</h2>
           <p class="hint">Ranked by ringgit, comfort and how far the data can be trusted.</p>
         </div>
+        <div id="projection" class="projection" aria-live="polite"></div>
         <ol id="actions" class="actions"></ol>
       </div>
     </section>
@@ -89,6 +91,7 @@
 
   <footer class="foot">
     <p id="foot-mode"></p>
+    <p><a href="/api/report.pdf" download>Download this week's Estates report (PDF)</a></p>
     <p>APU Cloud Innovation Hackathon 2026 · Track 3 · Data-driven research and intelligent decision making</p>
   </footer>
 

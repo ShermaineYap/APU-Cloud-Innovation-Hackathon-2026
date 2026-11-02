@@ -55,3 +55,31 @@ def test_room_network_ask():
         a = c.post("/api/ask", json={"question": "Which rooms wasted the most energy cooling while empty this week?"})
         assert a.json()["rows"] and a.json()["sql"].startswith("SELECT")
         assert c.get("/").status_code == 200
+
+
+def test_camera_counts_override_people_and_keep_sensor_data():
+    with client() as c:
+        h = {"X-Device-Key": "test-key"}
+        cam = {"device_id": "cam-aud1", "room_id": "AUD-1", "occupied": True, "people": 7}
+        assert c.post("/api/ingest", json=cam | {"people": None}, headers=h).status_code == 422
+        assert c.post("/api/ingest", json=[cam] * 3, headers=h).json()["accepted"] == 3
+        room = next(r for r in c.get("/api/overview").json()["rooms"] if r["room_id"] == "AUD-1")
+        assert room["people"] == 7 and room["people_source"] == "camera"
+        assert room["co2_ppm"] and room["watts"] is not None  # air and energy still from the sensor node
+        api.cache.clear()  # the network panel is cached for a minute
+        node = next(n for n in c.get("/api/network").json()["nodes"] if n["device_id"] == "cam-aud1")
+        assert not any("stuck" in i for i in node["issues"]) and node["avg_rssi_dbm"] is None
+        # A sensor reading without its air fields is rejected; only cameras may omit them.
+        assert c.post("/api/ingest", json={k: v for k, v in GOOD.items() if k != "co2_ppm"}, headers=h).status_code == 422
+
+
+def test_caption_and_report():
+    with client() as c:
+        acts = c.get("/api/actions").json()
+        cap = c.get(f"/api/actions/{acts[0]['id']}/caption").json()
+        assert cap["caption"].endswith(".") and cap["source"] == "template"
+        assert c.get("/api/actions/nope/caption").status_code == 404
+        c.post(f"/api/actions/{acts[0]['id']}/decide", json={"status": "approved"})
+        r = c.get("/api/report.pdf")
+        assert r.status_code == 200 and r.content[:5] == b"%PDF-"
+        assert "attachment" in r.headers["content-disposition"]

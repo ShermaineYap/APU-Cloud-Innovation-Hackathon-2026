@@ -13,13 +13,14 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
-from . import __version__, analytics, decisions, network
-from .agent import ask, daily_brief, suggestions
+from . import __version__, analytics, decisions, network, report
+from .agent import ask, chart_caption, daily_brief, suggestions
 from .campus import LIVE_ROOM, ROOM_BY_ID
+from .network import is_camera
 from .config import settings
 from .simulator import Fleet
 from .store import get_store
@@ -52,7 +53,13 @@ class Cache:
 
 
 cache = Cache()
-state = {"last_real": None, "real_count": 0, "started": datetime.now(timezone.utc)}
+state = {"last_real": None, "real_count": 0, "started": datetime.now(timezone.utc), "real_rooms": {}}
+
+
+def _real_kinds(room_id: str, within_s: int = 300) -> set[str]:
+    now = datetime.now(timezone.utc)
+    return {kind for (rid, kind), t in state["real_rooms"].items()
+            if rid == room_id and (now - t).total_seconds() < within_s}
 
 
 def _live_loop(fleet: Fleet, stop: threading.Event):
@@ -60,7 +67,17 @@ def _live_loop(fleet: Fleet, stop: threading.Event):
     while not stop.wait(30):
         try:
             rows = fleet.tick(datetime.now(timezone.utc))
-            store.insert_readings(rows)
+            # Where real hardware is reporting, it replaces the simulated twin: a live sensor node
+            # replaces the whole row, a live camera replaces just the head count.
+            out = []
+            for r in rows:
+                kinds = _real_kinds(r["room_id"])
+                if "sensor" in kinds:
+                    continue
+                if "camera" in kinds:
+                    r = r | {"people": None}
+                out.append(r)
+            store.insert_readings(out)
         except Exception:  # keep the demo alive
             log.exception("live simulator tick failed")
 
@@ -96,12 +113,12 @@ class Reading(BaseModel):
     ts: datetime | None = None  # server time is used when the node has no clock
     occupied: bool
     people: int | None = Field(default=None, ge=0, le=500)
-    co2_ppm: float = Field(ge=300, le=10000)
-    temp_c: float = Field(ge=0, le=60)
+    co2_ppm: float | None = Field(default=None, ge=300, le=10000)  # None for camera nodes
+    temp_c: float | None = Field(default=None, ge=0, le=60)
     humidity_pct: float | None = Field(default=None, ge=0, le=100)
     watts: float | None = Field(default=None, ge=0)
     ac_on: bool | None = None
-    rssi_dbm: float = Field(ge=-120, le=0)
+    rssi_dbm: float | None = Field(default=None, ge=-120, le=0)
     packets_sent: int = Field(default=1, ge=0)
     packets_acked: int = Field(default=1, ge=0)
     gateway_id: str | None = None
@@ -110,6 +127,17 @@ class Reading(BaseModel):
         room = ROOM_BY_ID.get(self.room_id)
         if room is None:
             raise HTTPException(422, f"unknown room_id {self.room_id}")
+        if is_camera(self.device_id):
+            # A camera counts people and nothing else; energy and air come from the room's sensor node.
+            if self.people is None:
+                raise HTTPException(422, "camera readings need a people count")
+            return self.model_dump() | {"ts": self.ts or datetime.now(timezone.utc),
+                                        "gateway_id": self.gateway_id or room.gateway_id,
+                                        "occupied": self.people > 0, "watts": None, "ac_on": None,
+                                        "co2_ppm": None, "temp_c": None, "humidity_pct": None,
+                                        "simulated": False}
+        if self.co2_ppm is None or self.temp_c is None or self.rssi_dbm is None:
+            raise HTTPException(422, "sensor readings need co2_ppm, temp_c and rssi_dbm")
         watts = self.watts or 0.0
         return self.model_dump() | {
             "ts": self.ts or datetime.now(timezone.utc),
@@ -130,8 +158,12 @@ def _accept(rows: list[dict]) -> int:
         n = len(rows)
     else:
         n = get_store().insert_readings(rows)
-    state["last_real"] = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    state["last_real"] = now
     state["real_count"] += n
+    for r in rows:
+        kind = "camera" if is_camera(r["device_id"]) else "sensor"
+        state["real_rooms"][(r["room_id"], kind)] = now
     return n
 
 
@@ -229,6 +261,30 @@ def decide(action_id: str, body: Decision):
 def decision_log():
     df = get_store().query("SELECT * FROM decisions ORDER BY decided_at DESC LIMIT 50")
     return json.loads(df.to_json(orient="records", date_format="iso"))
+
+
+def _decision_status() -> dict[str, str]:
+    """Latest decision per action id."""
+    df = get_store().query("""SELECT action_id, status FROM decisions
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY action_id ORDER BY decided_at DESC) = 1""")
+    return dict(zip(df["action_id"], df["status"]))
+
+
+@app.get("/api/actions/{action_id}/caption")
+def caption(action_id: str):
+    act = next((a for a in _actions() if a["id"] == action_id), None)
+    if act is None:
+        raise HTTPException(404, "action not found; refresh the brief")
+    return cache.get(f"caption:{action_id}", 3600, lambda: chart_caption(act))
+
+
+@app.get("/api/report.pdf")
+def estates_report():
+    b = brief()
+    pdf = report.build_pdf(b["brief"], b["actions"], analytics.kpis(get_store()), _decision_status(), _mode())
+    name = f"campuspulse-estates-report-{datetime.now(settings.timezone):%Y-%m-%d}.pdf"
+    return Response(pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @app.get("/api/rooms/{room_id}")

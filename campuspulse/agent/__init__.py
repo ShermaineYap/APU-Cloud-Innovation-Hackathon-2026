@@ -1,3 +1,3 @@
-from .gemini import ask, daily_brief, suggestions
+from .gemini import ask, chart_caption, daily_brief, suggestions
 
-__all__ = ["ask", "daily_brief", "suggestions"]
+__all__ = ["ask", "chart_caption", "daily_brief", "suggestions"]

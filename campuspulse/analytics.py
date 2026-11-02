@@ -11,7 +11,7 @@ import pandas as pd
 
 from .campus import ROOM_BY_ID
 from .config import settings
-from .network import STALE_AFTER_MIN, link_health, room_confidence
+from .network import CAMERA_PREFIX, STALE_AFTER_MIN, link_health, room_confidence
 from .store import Store
 
 
@@ -20,11 +20,20 @@ def _now_local(store: Store) -> pd.Timestamp:
 
 
 def room_states(store: Store) -> list[dict]:
-    latest = store.query("""
+    latest = store.query(f"""
         SELECT * FROM readings
         WHERE ts >= TIMESTAMP_SUB((SELECT MAX(ts) FROM readings), INTERVAL 2 HOUR)
+          AND NOT STARTS_WITH(device_id, '{CAMERA_PREFIX}')
         QUALIFY ROW_NUMBER() OVER (PARTITION BY room_id ORDER BY ts DESC, simulated ASC) = 1
     """)
+    # Edge cameras count heads; a fresh count overrides the sensor node's estimate.
+    cams = store.query(f"""
+        SELECT room_id, people, device_id, ts FROM readings
+        WHERE STARTS_WITH(device_id, '{CAMERA_PREFIX}')
+          AND ts >= TIMESTAMP_SUB((SELECT MAX(ts) FROM readings), INTERVAL {STALE_AFTER_MIN} MINUTE)
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY room_id ORDER BY ts DESC) = 1
+    """)
+    cam_by_room = {c.room_id: c for c in cams.itertuples()}
     newest = latest["ts"].max() if len(latest) else None
     conf = room_confidence(link_health(store, hours=24))
     by_room = {r.room_id: r for r in latest.itertuples()}
@@ -39,19 +48,26 @@ def room_states(store: Store) -> list[dict]:
             out.append(item | {"status": "offline"})
             continue
         age = (newest - r.ts).total_seconds() / 60
+        cam = cam_by_room.get(rid)
+        people = None if pd.isna(r.people) else int(r.people)
+        occupied = bool(r.occupied)
+        if cam is not None and pd.notna(cam.people):
+            people, occupied = int(cam.people), int(cam.people) > 0
         if age > STALE_AFTER_MIN:
             status = "offline"
-        elif r.co2_ppm >= settings.co2_limit_ppm and r.occupied:
+        elif r.co2_ppm >= settings.co2_limit_ppm and occupied:
             status = "stale_air"
-        elif r.occupied:
+        elif occupied:
             status = "in_use"
         elif r.ac_on:
             status = "empty_cooled"
         else:
             status = "idle"
-        people = None if pd.isna(r.people) else int(r.people)
         out.append(item | {
-            "status": status, "people": people, "occupied": bool(r.occupied),
+            "status": status, "people": people, "occupied": occupied,
+            "people_source": "camera" if cam is not None and pd.notna(cam.people) else
+                             ("estimate" if r.simulated else "sensor"),
+            "camera_device": cam.device_id if cam is not None else None,
             "co2_ppm": float(r.co2_ppm), "temp_c": float(r.temp_c), "watts": float(r.watts),
             "ac_on": bool(r.ac_on), "rssi_dbm": float(r.rssi_dbm), "device_id": r.device_id,
             "simulated": bool(r.simulated), "ts": r.ts.isoformat(), "minutes_ago": round(age, 1),

@@ -79,16 +79,18 @@ function renderPlan(list) {
 function roomCell(r) {
   const fill = r.people != null && r.capacity ? Math.min(100, (r.people / r.capacity) * 100) : 0;
   const isLive = r.room_id === mode.live_room && r.simulated === false;
+  const isCam = r.people_source === "camera";
   const reading = r.status === "offline"
     ? `<span>Silent ${r.minutes_ago != null ? fmt(r.minutes_ago) + " min" : ""}</span>`
     : `${r.people != null ? `<span><b>${fmt(r.people)}</b>/${r.capacity}</span>` : `<span><b>${r.occupied ? "Motion" : "No motion"}</b></span>`}
        <span class="co2"><b>${fmt(r.co2_ppm)}</b> ppm</span>
        <span><b>${fmt(r.temp_c, 1)}</b>°C</span>`;
   const label = `${r.room_id} ${r.name}: ${STATUS_TEXT[r.status]}` +
-    (r.people != null ? `, ${r.people} of ${r.capacity} seats` : "") +
+    (r.people != null ? `, ${r.people} of ${r.capacity} seats${isCam ? " counted by camera" : ""}` : "") +
     (r.co2_ppm ? `, CO2 ${Math.round(r.co2_ppm)} ppm` : "") + `, data confidence ${r.confidence}`;
-  return `<button type="button" class="room ${r.status}" data-id="${esc(r.room_id)}" aria-label="${esc(label)}">
-      ${isLive ? `<span class="live"><span class="dot on"></span>live</span>` : `<span class="tag">${esc(STATUS_TEXT[r.status])}</span>`}
+  return `<button type="button" class="room ${r.status}${picked.has(r.room_id) ? " picked" : ""}" data-id="${esc(r.room_id)}" aria-label="${esc(label)}">
+      ${isCam ? `<span class="live"><span class="dot on"></span>camera count</span>`
+        : isLive ? `<span class="live"><span class="dot on"></span>live</span>` : `<span class="tag">${esc(STATUS_TEXT[r.status])}</span>`}
       <span class="code">${esc(r.room_id)}</span>
       <span class="name">${esc(r.name)}</span>
       ${r.confidence_level === "low" ? `<span class="lowconf">Low data confidence</span>` : ""}
@@ -99,6 +101,10 @@ function roomCell(r) {
 
 /* ---------- actions ---------- */
 const decided = new Map();
+const whatIf = new Set();
+let picked = new Set();
+let lastKpis = null;
+const CUTS_EMPTY_COOLING = new Set(["occupancy_linked_ac", "after_hours_ac"]);
 
 function renderActions(actions, brief) {
   const why = Object.fromEntries((brief.items || []).map((i) => [i.id, i]));
@@ -109,6 +115,43 @@ function renderActions(actions, brief) {
     if (d.open) drawEvidence(d, ordered.find((a) => a.id === d.dataset.id));
   }, { once: false }));
   list.querySelectorAll("[data-decide]").forEach((b) => b.addEventListener("click", () => decide(b.dataset.id, b.dataset.decide, b)));
+  list.querySelectorAll("[data-whatif]").forEach((b) => b.addEventListener("click", () => {
+    const id = b.dataset.whatif;
+    whatIf.has(id) ? whatIf.delete(id) : whatIf.add(id);
+    renderActions(lastBrief.actions, lastBrief.brief);
+  }));
+  renderProjection(actions);
+}
+
+/* What if: the week recalculated with the selected and approved changes in place. */
+function renderProjection(actions) {
+  const chosen = actions.filter((a) => decided.get(a.id) === "approved" || (whatIf.has(a.id) && decided.get(a.id) !== "dismissed"));
+  picked = new Set(chosen.flatMap((a) => a.rooms));
+  document.querySelectorAll(".room").forEach((el) => el.classList.toggle("picked", picked.has(el.dataset.id)));
+  const box = $("#projection");
+  if (!chosen.length) {
+    box.innerHTML = `<p class="hint">Press <b>What if</b> on any change to see this week recalculated with it in place. Approved changes count automatically.</p>`;
+    return;
+  }
+  const tariff = mode.tariff_rm_per_kwh || 0.5;
+  const kwh = chosen.reduce((s, a) => s + a.kwh_per_week, 0);
+  const now = lastKpis?.wasted_kwh || 0;
+  const cut = chosen.filter((a) => CUTS_EMPTY_COOLING.has(a.kind)).reduce((s, a) => s + Math.max(0, a.kwh_per_week), 0);
+  const after = Math.max(0, now - cut);
+  const approvedN = chosen.filter((a) => decided.get(a.id) === "approved").length;
+  const comfort = chosen.filter((a) => a.kind === "air_quality").length;
+  const fixes = chosen.filter((a) => a.kind === "data_reliability").length;
+  const notes = [comfort ? `${comfort} stale-air fix${comfort > 1 ? "es" : ""} (comfort, not energy)` : "",
+                 fixes ? `${fixes} data fix${fixes > 1 ? "es" : ""} that raise confidence` : ""].filter(Boolean);
+  box.innerHTML = `
+    <p class="proj-line"><b>${chosen.length} change${chosen.length > 1 ? "s" : ""}</b>${approvedN ? ` (${approvedN} approved)` : ""} in place:
+      saves <b>${fmt(kwh)} kWh</b> a week, about <b>RM ${fmt(kwh * tariff)}</b>, or RM ${fmt(kwh * tariff * 52)} a year if sustained.</p>
+    <div class="proj-bars" role="img" aria-label="Empty-room cooling: ${fmt(now)} kWh now, ${fmt(after)} kWh with these changes">
+      <span class="lbl">Empty-room cooling now</span><span class="track"><span class="meter now" style="width:100%"></span></span><span class="val">${fmt(now)} kWh</span>
+      <span class="lbl">With these changes</span><span class="track"><span class="meter after" style="width:${now ? (after / now) * 100 : 0}%"></span></span><span class="val">${fmt(after)} kWh</span>
+    </div>
+    ${notes.length ? `<p class="hint">${notes.join(" · ")}.</p>` : ""}
+    <p class="hint">Rooms touched by these changes are outlined on the floor plan.</p>`;
 }
 
 function impactLine(a) {
@@ -133,6 +176,7 @@ function actionItem(a, w) {
       <div class="evidence">
         ${w?.first_step ? `<p class="first-step"><b>First step:</b> ${esc(w.first_step)}</p>` : ""}
         ${w?.why_now && w.why_now !== a.summary ? `<p class="first-step">${esc(a.summary)}</p>` : ""}
+        <p class="caption" data-caption="${esc(a.id)}"></p>
         <canvas aria-label="${esc(a.chart?.label || "Evidence chart")}" role="img"></canvas>
         ${rowsTable(a.evidence_rows)}
         <pre class="sql">${esc(a.evidence_sql)}</pre>
@@ -143,12 +187,27 @@ function actionItem(a, w) {
       : `<div class="decide">
           <button type="button" class="solid" data-decide="approved" data-id="${esc(a.id)}">Approve</button>
           <button type="button" class="ghost" data-decide="dismissed" data-id="${esc(a.id)}">Dismiss</button>
+          <button type="button" class="ghost whatif" data-whatif="${esc(a.id)}" aria-pressed="${whatIf.has(a.id)}">What if</button>
         </div>`}
   </li>`;
 }
 
+async function loadCaption(details, a) {
+  const p = $("[data-caption]", details);
+  if (!p || p.dataset.loaded) return;
+  p.dataset.loaded = "1";
+  p.textContent = "Reading the chart…";
+  try {
+    const c = await api(`/api/actions/${encodeURIComponent(a.id)}/caption`);
+    p.innerHTML = c.caption ? `${esc(c.caption)} <span class="src">${esc(c.source.startsWith("Gemini") ? c.source : "Summary from the chart's numbers")}</span>` : "";
+  } catch {
+    p.textContent = "";
+  }
+}
+
 function drawEvidence(details, a) {
   if (!a?.chart?.x) return;
+  loadCaption(details, a);
   const c = a.chart;
   const color = { air_quality: AMBER, data_reliability: RED, right_size: TEAL }[a.kind] || BLUE;
   const datasets = [{ label: c.label, data: c.y, backgroundColor: color, borderColor: color, borderRadius: 2 }];
@@ -201,6 +260,7 @@ async function openRoom(id) {
       <div class="facts">
         <span>Status: <b>${esc(STATUS_TEXT[r?.status] || "–")}</b></span>
         <span>Data confidence: <b class="conf ${r?.confidence_level}">${r?.confidence ?? "–"}</b></span>
+        <span>Head count: <b>${r?.people_source === "camera" ? `camera (YOLO on the device, ${esc(r.camera_device)})` : r?.people_source === "sensor" ? "sensor node" : "simulated estimate"}</b></span>
         ${r?.issues?.length ? `<span>${esc(r.issues.join("; "))}</span>` : ""}
       </div>
       <div class="chart"><h3>People: last 48 hours and the next 24 forecast</h3><canvas id="c-people" role="img" aria-label="Occupancy and forecast"></canvas>
@@ -335,6 +395,12 @@ async function loadOverview() {
   mode = o.mode;
   renderStatus(o.mode);
   renderPlan(o.rooms);
+  const cams = o.rooms.filter((r) => r.people_source === "camera").map((r) => r.room_id);
+  const sensorLive = o.rooms.some((r) => r.simulated === false);
+  if (cams.length) {
+    $("#status").innerHTML = `<span class="dot on"></span>${sensorLive ? `Live sensor in ${esc(o.mode.live_room)} reporting · ` : ""}` +
+      `Camera counting people in ${esc(cams.join(", "))}${sensorLive ? "" : "; other readings simulated"}`;
+  }
   return o;
 }
 
@@ -344,6 +410,7 @@ async function loadBrief(refresh = false) {
   try {
     const [o, b] = await Promise.all([loadOverview(), api(`/api/brief${refresh ? "?refresh=true" : ""}`)]);
     lastBrief = b;
+    lastKpis = o.kpis;
     renderLead(b.brief, o.kpis);
     renderActions(b.actions, b.brief);
     if (refresh) toast("Brief refreshed from the latest data.");
@@ -354,7 +421,14 @@ async function loadBrief(refresh = false) {
 
 $("#refresh").addEventListener("click", () => loadBrief(true).catch((e) => toast(e.message)));
 
-loadBrief().catch((e) => { $("#headline").textContent = "CampusPulse could not reach its data service."; $("#figures").textContent = e.message; });
+async function restoreDecisions() {
+  try {
+    const log = await api("/api/decisions");
+    for (const d of log) if (!decided.has(d.action_id)) decided.set(d.action_id, d.status); // newest first
+  } catch { /* the log is optional */ }
+}
+
+restoreDecisions().then(() => loadBrief()).catch((e) => { $("#headline").textContent = "CampusPulse could not reach its data service."; $("#figures").textContent = e.message; });
 loadSuggestions().catch(() => {});
 loadNetwork().catch(() => {});
 setInterval(() => loadOverview().catch(() => {}), 30000);

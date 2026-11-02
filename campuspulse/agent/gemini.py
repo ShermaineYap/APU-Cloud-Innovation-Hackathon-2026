@@ -76,7 +76,8 @@ Rules:
 The headline states the single most important finding as a plain sentence (for example the share of
 cooling spent on empty rooms); do not start it with "Morning brief". Copy numbers exactly as written.
 Return JSON: {"headline": str (max 14 words), "summary": str (max 60 words),
- "items": [{"id": str, "why_now": str (max 30 words), "first_step": str (max 20 words)}]} for up to 5 actions."""
+ "items": [{"id": str, "why_now": str (max 30 words), "first_step": str (max 20 words)}]} for up to 5 actions.
+first_step is a concrete thing a named team can do this week (who does what); never restate the action's title."""
 
 
 def _model_payload(kpis: dict, actions: list[dict]) -> dict:
@@ -106,16 +107,27 @@ def _model_payload(kpis: dict, actions: list[dict]) -> dict:
     return {"kpis": k, "actions": acts}
 
 
+FIRST_STEP = {
+    "after_hours_ac": "Ask the building system team to clear the weekend override today.",
+    "occupancy_linked_ac": "Pilot PIR-linked AC control in the two worst rooms this week.",
+    "right_size": "Send the room swaps to the timetabling office for next week.",
+    "air_quality": "Raise fresh-air supply now; propose the room change to timetabling.",
+    "data_reliability": "Book a technician visit before acting on this room's data.",
+}
+
+
+def _repeats(step: str, title: str) -> bool:
+    """True when a 'first step' only restates the action's title."""
+    a = "".join(ch for ch in (step or "").lower() if ch.isalnum())
+    b = "".join(ch for ch in (title or "").lower() if ch.isalnum())
+    return not a or a in b or b in a
+
+
 def _fallback_brief(actions: list[dict], kpis: dict) -> dict:
     top = actions[:5]
     items = []
     for a in top:
-        first = {"after_hours_ac": "Ask the building system team to clear the weekend override today.",
-                 "occupancy_linked_ac": "Pilot PIR-linked AC control in the two worst rooms this week.",
-                 "right_size": "Send the swap to the timetabling office for next week.",
-                 "air_quality": "Raise fresh-air supply now; propose the room change to timetabling.",
-                 "data_reliability": "Book a technician visit before acting on this room's data."}[a["kind"]]
-        items.append({"id": a["id"], "why_now": a["summary"], "first_step": first})
+        items.append({"id": a["id"], "why_now": a["summary"], "first_step": FIRST_STEP[a["kind"]]})
     lead = top[0] if top else None
     saving = sum(max(a["rm_per_week"], 0) for a in top)
     headline = (f"Empty rooms took {kpis['wasted_share'] * 100:.0f}% of this week's cooling energy"
@@ -182,6 +194,11 @@ def daily_brief(actions: list[dict], kpis: dict) -> dict:
         brief = _parse_json(resp.text)
         known = {a["id"] for a in actions}
         brief["items"] = [i for i in brief.get("items", []) if i.get("id") in known][:5]
+        by_id = {a["id"]: a for a in actions}
+        for i in brief["items"]:
+            a = by_id[i["id"]]
+            if _repeats(i.get("first_step", ""), a["title"]):
+                i["first_step"] = FIRST_STEP[a["kind"]]
         brief["source"] = f"Gemini ({settings.gemini_model})"
         return brief
     except Exception as e:  # never let the brief take the page down
@@ -192,6 +209,61 @@ def daily_brief(actions: list[dict], kpis: dict) -> dict:
 
 
 # --- ask the data ------------------------------------------------------------
+
+# --- chart captions ------------------------------------------------------------
+
+CAPTION_SYSTEM = """You write one-line captions for evidence charts in a campus facilities dashboard.
+You get the chart's title, its x labels and y values, and an optional reference line.
+Write one plain sentence, at most 25 words, stating the single most useful pattern.
+Use only numbers that appear in the data (you may round them). Name rooms, days or classes as given.
+No hype, no advice, no emoji. Return only the sentence."""
+
+
+def _num(v: float) -> str:
+    return f"{v:,.0f}" if abs(v) >= 10 else f"{v:,.1f}"
+
+
+def _fallback_caption(chart: dict) -> str:
+    x, y = chart.get("x") or [], [float(v) for v in (chart.get("y") or [])]
+    if not x or not y:
+        return ""
+    label = (chart.get("label") or "Value").rstrip(".")
+    hi = max(range(len(y)), key=y.__getitem__)
+    if len(y) == 1:
+        return f"{label}: {x[0]} at {_num(y[0])}."
+    lo = min(range(len(y)), key=y.__getitem__)
+    text = f"{label}: highest {x[hi]} at {_num(y[hi])}, lowest {x[lo]} at {_num(y[lo])}"
+    ref = chart.get("ref")
+    if ref is not None:
+        above = sum(v > ref for v in y)
+        text += f"; {above} of {len(y)} above the {_num(float(ref))} line"
+    return text + "."
+
+
+def chart_caption(action: dict) -> dict:
+    """One sentence describing an action's evidence chart, from its numbers only."""
+    chart = action.get("chart") or {}
+    fallback = {"caption": _fallback_caption(chart), "source": "template"}
+    if not settings.gemini_enabled or not chart.get("x"):
+        return fallback
+    from google.genai import types
+
+    data = {"title": chart.get("label"), "action": action.get("title"),
+            "points": [{"x": str(a), "y": b} for a, b in zip(chart["x"][:40], chart["y"][:40])],
+            "reference_line": chart.get("ref")}
+    try:
+        resp = _client().models.generate_content(
+            model=settings.gemini_model, contents=json.dumps(data, default=str),
+            config=types.GenerateContentConfig(system_instruction=CAPTION_SYSTEM, temperature=0.2),
+        )
+        text = " ".join((resp.text or "").split()).strip().strip('"')
+        if not text:
+            return fallback
+        return {"caption": text[:240], "source": f"Gemini ({settings.gemini_model})"}
+    except Exception as e:
+        log.warning("Gemini caption failed: %s", e)
+        return fallback | {"source": f"template (Gemini error: {_why(e)})"}
+
 
 ASK_SYSTEM = """You answer questions about campus rooms, energy, air quality and sensor network health
 by querying the warehouse with the run_sql tool. Always query; never answer from memory.

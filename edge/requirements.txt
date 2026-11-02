@@ -1,0 +1,5 @@
+# Edge camera node only (not needed for the CampusPulse service).
+# Ultralytics is AGPL-3.0; it is kept out of the main app, which stays MIT.
+ultralytics>=8.4
+opencv-python>=4.9
+httpx>=0.27
