@@ -55,7 +55,7 @@ python -m uvicorn campuspulse.api:app --port 8080
 # open http://localhost:8080
 ```
 
-The first start seeds 28 days of history (about 5 seconds). Without a Gemini key the brief is templated and Ask works on the 15 tested questions. To switch Gemini on, copy `.env.example` to `.env` and set `GEMINI_API_KEY` (AI Studio), or `CP_GEMINI_VERTEX=true` and `GOOGLE_CLOUD_PROJECT` for Vertex AI. The app reads `.env` on start; it is git-ignored.
+The first start seeds 28 days of history (about 5 seconds). Without a Gemini key the brief is templated and Ask works on the 15 tested questions. To switch Gemini on, copy `.env.example` to `.env` and set `GEMINI_API_KEY` (AI Studio), or `CP_GEMINI_VERTEX=true` and `GOOGLE_CLOUD_PROJECT` for Vertex AI. The app reads `.env` on start; it is git-ignored. Run `python scripts/check_gemini.py` to test the key and model; it prints Gemini's own error if something is wrong.
 
 Send a reading as the physical node would:
 

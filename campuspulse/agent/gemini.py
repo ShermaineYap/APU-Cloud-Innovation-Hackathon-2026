@@ -100,6 +100,16 @@ def _fallback_brief(actions: list[dict], kpis: dict) -> dict:
 
 
 
+def _parse_json(text: str) -> dict:
+    """Parse a JSON object, tolerating ```json fences around it."""
+    t = (text or "").strip()
+    if t.startswith("```"):
+        t = t.split("\n", 1)[1] if "\n" in t else t
+        t = t.rsplit("```", 1)[0]
+    start, end = t.find("{"), t.rfind("}")
+    return json.loads(t[start:end + 1] if start >= 0 and end > start else t)
+
+
 def _why(e: Exception) -> str:
     """Short, key-free reason for a Gemini failure, shown in the UI."""
     code = getattr(e, "code", None)
@@ -121,13 +131,24 @@ def daily_brief(actions: list[dict], kpis: dict) -> dict:
         {k: a[k] for k in ("id", "kind", "title", "summary", "kwh_per_week", "rm_per_week", "comfort",
                            "confidence", "confidence_level", "rooms")} for a in actions[:8]]}
     try:
-        resp = _client().models.generate_content(
-            model=settings.gemini_model,
-            contents=json.dumps(payload, default=str),
-            config=types.GenerateContentConfig(system_instruction=BRIEF_SYSTEM, temperature=0.2,
-                                               response_mime_type="application/json"),
-        )
-        brief = json.loads(resp.text)
+        client = _client()
+        try:
+            resp = client.models.generate_content(
+                model=settings.gemini_model,
+                contents=json.dumps(payload, default=str),
+                config=types.GenerateContentConfig(system_instruction=BRIEF_SYSTEM, temperature=0.2,
+                                                   response_mime_type="application/json"),
+            )
+        except Exception as first:
+            if getattr(first, "code", None) != 400:
+                raise
+            # Some models reject optional settings; retry with the instructions inline and defaults.
+            log.warning("Gemini brief retry without optional settings: %s", first)
+            resp = client.models.generate_content(
+                model=settings.gemini_model,
+                contents=BRIEF_SYSTEM + "\nReturn only the JSON object.\n\n" + json.dumps(payload, default=str),
+            )
+        brief = _parse_json(resp.text)
         known = {a["id"] for a in actions}
         brief["items"] = [i for i in brief.get("items", []) if i.get("id") in known][:5]
         brief["source"] = f"Gemini ({settings.gemini_model})"
