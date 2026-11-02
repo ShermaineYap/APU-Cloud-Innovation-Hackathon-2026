@@ -53,7 +53,7 @@ class Settings:
     # Gemini: Vertex AI when CP_GEMINI_VERTEX=true, otherwise an AI Studio key.
     gemini_vertex: bool = field(default_factory=lambda: _bool("CP_GEMINI_VERTEX", False))
     gemini_api_key: str | None = field(default_factory=lambda: os.getenv("GEMINI_API_KEY"))
-    gemini_model: str = field(default_factory=lambda: os.getenv("CP_GEMINI_MODEL", "gemini-3.8-flash"))
+    gemini_model: str = field(default_factory=lambda: os.getenv("CP_GEMINI_MODEL", "gemini-3.5-flash-lite"))
     gemini_location: str = field(default_factory=lambda: os.getenv("CP_GEMINI_LOCATION", "global"))
 
     ingest_key: str = field(default_factory=lambda: os.getenv("CP_INGEST_KEY", "dev-ingest-key"))

@@ -18,9 +18,9 @@ def main() -> int:
     print(f"Using Vertex AI:   {settings.gemini_vertex}")
     print(f"Model:             {settings.gemini_model}")
     if not settings.gemini_vertex:
-        looks_ok = key.startswith("AIza") and len(key) == 39 and key.strip() == key
+        looks_ok = key.strip() == key and (key.startswith("AQ.") or (key.startswith("AIza") and len(key) == 39))
         print(f"API key set:       {bool(key)} (length {len(key)}, "
-              f"{'looks right' if looks_ok else 'expected 39 characters starting with AIza'})")
+              f"{'looks right' if looks_ok else 'expected a key starting with AQ. or AIza, no spaces or quotes'})")
     if not settings.gemini_enabled:
         print("\nGemini is not configured. Put GEMINI_API_KEY=... in .env (same folder as README.md).")
         return 1

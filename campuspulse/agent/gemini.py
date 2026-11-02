@@ -26,10 +26,13 @@ MAX_TOOL_TURNS = 5
 @lru_cache(maxsize=1)
 def _client():
     from google import genai
+    from google.genai import types
 
+    http = types.HttpOptions(timeout=30_000)  # ms; a slow model must not freeze the page
     if settings.gemini_vertex:
-        return genai.Client(vertexai=True, project=settings.gcp_project, location=settings.gemini_location)
-    return genai.Client(api_key=settings.gemini_api_key)
+        return genai.Client(vertexai=True, project=settings.gcp_project, location=settings.gemini_location,
+                            http_options=http)
+    return genai.Client(api_key=settings.gemini_api_key, http_options=http)
 
 
 def _rows(df: pd.DataFrame, n: int = 200) -> list[dict]:
@@ -66,7 +69,8 @@ def chart_for(rows: list[dict]) -> dict | None:
 BRIEF_SYSTEM = """You are the facilities analyst for a university campus in Malaysia.
 Write a short morning brief for the Estates manager from the JSON you are given.
 Rules:
-- Use only numbers that appear in the JSON. Never estimate, round up or invent figures.
+- Use only numbers that appear in the JSON. Never estimate or invent figures.
+- Round kWh and RM to whole numbers with thousands separators (3,846 kWh, RM 1,923). Show fractions such as utilisation as percentages (0.413 -> 41%). Do not mention action ids or field names.
 - Keep the engine's ranking unless confidence is low; a low-confidence action must say what to check first.
 - Plain, direct English. No hype, no emoji.
 Return JSON: {"headline": str (max 14 words), "summary": str (max 60 words),
