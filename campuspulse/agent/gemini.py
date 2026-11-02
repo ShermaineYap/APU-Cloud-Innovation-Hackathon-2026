@@ -104,11 +104,12 @@ def _why(e: Exception) -> str:
     """Short, key-free reason for a Gemini failure, shown in the UI."""
     code = getattr(e, "code", None)
     status = getattr(e, "status", None)
-    hints = {400: "check the API key", 401: "check the API key", 403: "key not allowed for this API",
+    hints = {401: "check the API key", 403: "key not allowed for this API",
              404: "model name not found", 429: "quota or rate limit reached"}
     if code:
-        hint = hints.get(code, "")
-        return f"{code} {status or ''}".strip() + (f", {hint}" if hint else "")
+        detail = (getattr(e, "message", None) or "").strip().replace("\n", " ")[:160]
+        hint = detail or hints.get(code, "")
+        return f"{code} {status or ''}".strip() + (f": {hint}" if hint else "")
     return type(e).__name__
 
 def daily_brief(actions: list[dict], kpis: dict) -> dict:
