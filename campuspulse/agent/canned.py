@@ -32,19 +32,19 @@ HAVING MAX(max_people) > capacity OR MAX(expected) > capacity ORDER BY peak_peop
      "keys": ["each block", "per block", "block use"],
      "sql": f"""SELECT block, ROUND(SUM(kwh)) AS kwh, ROUND(SUM(kwh) * 0.5) AS approx_rm
 FROM v_room_hourly WHERE {WEEK} GROUP BY block ORDER BY block"""},
-    {"q": "What does a typical weekday look like for occupancy in Block A?",
+    {"q": "What does a typical weekday look like for occupancy in the auditoriums?",
      "keys": ["typical", "weekday", "profile"],
      "sql": """SELECT hour_of_day, ROUND(AVG(avg_people), 1) AS avg_people, ROUND(AVG(ac_on_frac), 2) AS ac_on
-FROM v_room_hourly WHERE block = 'A' AND weekday < 5 GROUP BY hour_of_day ORDER BY hour_of_day"""},
+FROM v_room_hourly WHERE block = 'AUD' AND weekday < 5 GROUP BY hour_of_day ORDER BY hour_of_day"""},
     {"q": "Which sensor nodes have the weakest network link?",
      "keys": ["weak", "network", "link", "signal", "rssi"],
      "sql": """SELECT device_id, room_id, gateway_id, ROUND(AVG(delivery_ratio), 3) AS delivery,
        ROUND(AVG(avg_rssi_dbm), 1) AS rssi_dbm
 FROM v_network_daily GROUP BY device_id, room_id, gateway_id ORDER BY delivery LIMIT 8"""},
     {"q": "When did Auditorium 2 run its AC on the weekend?",
-     "keys": ["weekend", "auditorium 2", "a-02"],
+     "keys": ["weekend", "auditorium 2", "aud-2"],
      "sql": """SELECT hour, ROUND(kwh, 2) AS kwh FROM v_empty_cooled
-WHERE room_id = 'A-02' AND weekday >= 5 ORDER BY hour DESC LIMIT 60"""},
+WHERE room_id = 'AUD-2' AND weekday >= 5 ORDER BY hour DESC LIMIT 60"""},
     {"q": "How full is each room on average when it is in use?",
      "keys": ["how full", "utilisation", "utilization", "average use"],
      "sql": """SELECT room_id, room_name, capacity, ROUND(AVG(utilisation), 2) AS avg_utilisation
@@ -53,7 +53,7 @@ FROM v_room_hourly WHERE occupied_frac > 0 GROUP BY room_id, room_name, capacity
      "keys": ["friday"],
      "sql": """SELECT CASE weekday WHEN 4 THEN 'Friday' ELSE 'Mon-Thu' END AS days,
        ROUND(AVG(avg_people / expected), 2) AS attendance_rate
-FROM v_slot_attendance WHERE start_hour >= 13 AND block = 'A' GROUP BY days"""},
+FROM v_slot_attendance WHERE start_hour >= 13 AND block = 'AUD' GROUP BY days"""},
     {"q": "What was the hottest room this week?",
      "keys": ["hottest", "temperature", "warm"],
      "sql": f"""SELECT room_id, room_name, ROUND(MAX(avg_temp_c), 1) AS max_temp_c

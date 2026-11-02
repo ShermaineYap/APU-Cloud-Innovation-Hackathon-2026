@@ -16,7 +16,7 @@ APU Cloud Innovation Hackathon 2026 · Track 3: Data-Driven Research & Intellige
 
 University rooms are cooled on a fixed building schedule, not by who is in them. Classes get booked into rooms three times too big, some tutorials squeeze more students than seats into a small room, and nobody has the evidence to change the timetable or the AC with confidence. When the data does exist, nobody knows whether the sensor behind it is reliable.
 
-In the demo data, **empty rooms take about 61% of the week's cooling energy**, and two of 21 sensor nodes are not trustworthy.
+CampusPulse runs on **APU's real teaching week**: 20 real rooms (Auditoriums 1–6, Block B classrooms, Tech Labs) and their actual classes, taken from APU's public timetable feed. In the demo, **empty rooms take about 43% of the week's cooling energy**, and dozens of classes with one or two intakes are booked into 120–200-seat auditoriums.
 
 ## What it does
 
@@ -43,9 +43,10 @@ Locally the same BigQuery SQL runs on DuckDB, transpiled by sqlglot, so the whol
 
 ## What is real and what is simulated
 
-- **Real:** one ESP32 node in room B-03 (`device_id esp32-b03`), its readings stored with `simulated = false`. When it reports, it replaces its simulated twin on the floor plan, marked "live".
-- **Simulated:** 20 rooms across three blocks, 28 days of 5-minute readings, labelled `simulated = true` everywhere. The simulator uses a CO₂ mass balance, a thermal model and AC load, and plants realistic problems: weekend AC left on, an oversized booking, an oversubscribed tutorial, Friday-afternoon no-shows, a weak link, a stuck CO₂ sensor and a four-hour gateway outage. The tests check that the engine finds every one of them without being told.
-- **Assumptions:** energy price `CP_TARIFF_RM_PER_KWH` (default RM 0.50/kWh, set from the current TNB commercial tariff before presenting); room capacities and AC loads are illustrative, not APU's estate data.
+- **Real, from APU:** the 20 rooms and their timetable for the week of 2 November 2026: room codes (`B-08-05` is Block B, level 8, room 05), auditorium names, module codes and names, exact class times, and how many intakes share each session. It comes from APU's public timetable feed (the data behind APSpace's timetable) via `scripts/import_apu_timetable.py`; lecturer names and accounts are dropped. The snapshot is in `campuspulse/data/apu_timetable.json`, so the app runs offline.
+- **Real, our sensor:** one ESP32 node in B-08-05 (`device_id esp32-b0805`, change with `CP_LIVE_ROOM`), its readings stored with `simulated = false`. When it reports, it replaces its simulated twin on the floor plan, marked "live".
+- **Simulated:** sensor readings for the other rooms, 28 days at 5-minute intervals, labelled `simulated = true` everywhere. The simulator follows the real timetable and uses a CO₂ mass balance, a thermal model and AC load. On top of what the real timetable produces (small classes in auditoriums, crowded shared sessions, cooling between classes), it plants Friday-afternoon no-shows, weekend AC left on in Auditorium 2, a weak link in Tech Lab 7-01, a stuck CO₂ sensor in Tech Lab 4-02 and a four-hour Tech Lab gateway outage. The tests check that the engine finds every one of them without being told.
+- **Assumptions:** APU does not publish room capacities, AC loads or enrolment, so seats (auditoriums 120–200, classrooms 50, Tech Labs 40) and AC loads are estimates, and class size is estimated as 12 students per intake sharing a session, capped at the room's seats. Energy price `CP_TARIFF_RM_PER_KWH` defaults to RM 0.50/kWh; set it from the current TNB commercial tariff before presenting. All of these live in `campuspulse/campus.py` and `.env`, ready to replace with Estates data.
 
 ## Run it locally (2 minutes)
 
@@ -61,7 +62,7 @@ Send a reading as the physical node would:
 
 ```bash
 curl -X POST localhost:8080/api/ingest -H 'X-Device-Key: dev-ingest-key' -H 'Content-Type: application/json' \
-  -d '{"device_id":"esp32-b03","room_id":"B-03","occupied":true,"co2_ppm":812,"temp_c":24.6,"rssi_dbm":-61,"watts":2100}'
+  -d '{"device_id":"esp32-b0805","room_id":"B-08-05","occupied":true,"co2_ppm":812,"temp_c":24.6,"rssi_dbm":-61,"watts":2100}'
 ```
 
 ## Deploy to Google Cloud
@@ -70,18 +71,19 @@ curl -X POST localhost:8080/api/ingest -H 'X-Device-Key: dev-ingest-key' -H 'Con
 PROJECT_ID=your-project ./deploy/deploy.sh
 ```
 
-This enables the APIs, creates a service account, builds the BigQuery dataset, views and history, and deploys Cloud Run with Gemini on Vertex AI. Train the BigQuery ML models afterwards with `python scripts/bq_setup.py --ml`. Firmware setup is in [firmware/README.md](firmware/README.md).
+This enables the APIs, creates a service account, builds the BigQuery dataset, views and history, and deploys Cloud Run with Gemini on Vertex AI. Train the BigQuery ML models afterwards with `python scripts/bq_setup.py --ml`. Refresh the timetable to the current week with `python scripts/import_apu_timetable.py --week YYYY-MM-DD` (a Monday). Firmware setup is in [firmware/README.md](firmware/README.md).
 
 ## Repository
 
 ```
 campuspulse/        service: simulator, store (BigQuery | DuckDB), analytics, network, decisions
 campuspulse/agent/  Gemini brief, SQL agent, read-only SQL guard, tested questions
+campuspulse/data/   APU timetable snapshot (public feed, no lecturer data)
 bigquery/           schema, curated views, BigQuery ML
 web/static/         dashboard
 firmware/           ESP32 node (MQTT QoS 1 or HTTPS)
 deploy/, scripts/   Cloud Run deploy, BigQuery setup
-tests/              26 tests: guard, engine finds planted problems, API, Gemini loop with a fake model
+tests/              27 tests: guard, engine finds planted problems, API, Gemini loop with a fake model
 ```
 
 ## API

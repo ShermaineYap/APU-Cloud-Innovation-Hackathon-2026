@@ -59,6 +59,16 @@ class Store(ABC):
     @abstractmethod
     def reading_count(self) -> int: ...
 
+    @abstractmethod
+    def clear_readings(self) -> None:
+        """Drop all sensor readings (used when the campus model changes)."""
+
+    def stale_rooms(self) -> bool:
+        """True when stored readings belong to rooms that are no longer in the campus model."""
+        ids = ", ".join(f"'{r.room_id}'" for r in ROOMS)
+        df = self.query(f"SELECT COUNT(*) AS n FROM readings WHERE room_id NOT IN ({ids})")
+        return int(df["n"].iloc[0]) > 0
+
     def static_frames(self) -> tuple[pd.DataFrame, pd.DataFrame]:
         return (pd.DataFrame([r.as_row() for r in ROOMS]),
                 pd.DataFrame([s.as_row() for s in TIMETABLE]))

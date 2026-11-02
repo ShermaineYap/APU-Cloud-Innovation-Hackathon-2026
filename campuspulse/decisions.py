@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 
 import pandas as pd
 
-from .campus import ROOM_BY_ID, ROOMS, TIMETABLE
+from .campus import BLOCK_LABEL, ROOM_BY_ID, ROOMS, TIMETABLE
 from .config import settings
 from .network import gateway_outages, link_health, room_confidence
 from .store import Store
@@ -71,6 +71,10 @@ def _smallest_free(weekday: int, start: int, end: int, need: int, exclude: str, 
     return min(options, key=lambda r: (r.capacity, r.ac_kw)).room_id if options else None
 
 
+def _cap(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
 # --- detectors ---------------------------------------------------------------
 
 def after_hours_cooling(store: Store) -> list[Action]:
@@ -119,8 +123,8 @@ WHERE {WEEK} AND weekday < 5 AND hour_of_day >= 7 AND hour_of_day < 21"""
         per_room = per_room.sort_values("kwh", ascending=False)
         acts.append(Action(
             kind="occupancy_linked_ac",
-            title=f"Tie Block {block} air-conditioning to occupancy, not the building schedule",
-            summary=(f"Block {block} rooms were cooled for {len(g)} empty room-hours on weekdays. "
+            title=f"Tie {BLOCK_LABEL.get(block, block)} air-conditioning to occupancy, not the building schedule",
+            summary=(f"{_cap(BLOCK_LABEL.get(block, block))} rooms were cooled for {len(g)} empty room-hours on weekdays. "
                      f"Cooling only when the PIR sees people, with a 1-hour pre-cool before booked "
                      f"classes, avoids {kwh:.0f} kWh a week."),
             rooms=per_room["room_id"].tolist(), kwh_per_week=kwh,
@@ -142,39 +146,46 @@ GROUP BY room_id, room_name, capacity, module, weekday, start_hour, expected"""
 
 
 def right_size_rooms(store: Store) -> list[Action]:
+    """Small classes in big rooms, grouped into one action per block."""
     sql, df = _slots(store)
-    acts = []
-    df = df[(df["max_people"] > 0) & (df["avg_people"] / df["capacity"] < 0.35)]
-    for (rid, module), g in df.groupby(["room_id", "module"]):
-        room = ROOM_BY_ID[rid]
-        moves, kwh, rows = [], 0.0, []
-        for s in g.itertuples():
-            slot = next(t for t in TIMETABLE if t.room_id == rid and t.weekday == s.weekday
-                        and t.start_hour == s.start_hour)
-            need = int(s.max_people * 1.15) + 1
-            alt = _smallest_free(s.weekday, slot.start_hour, slot.end_hour, need, rid,
-                                 ("lecture", "tutorial") if room.kind == "lecture" else (room.kind,))
-            if not alt or ROOM_BY_ID[alt].ac_kw >= room.ac_kw:
-                continue
-            hours = slot.end_hour - slot.start_hour
-            saved = (room.ac_kw - ROOM_BY_ID[alt].ac_kw) * AC_DUTY * hours
-            kwh += saved
-            moves.append(f"{DAYS[s.weekday]} → {alt}")
-            rows.append({"day": DAYS[s.weekday], "start": slot.start_hour, "seats": room.capacity,
-                         "avg_people": round(s.avg_people, 1), "peak_people": int(s.max_people),
-                         "move_to": alt, "move_to_seats": ROOM_BY_ID[alt].capacity, "kwh_saved": round(saved, 1)})
-        if not moves or kwh < 5:
+    df = df[(df["avg_people"] >= 3) & (df["avg_people"] / df["capacity"] < 0.35)]
+    moves: list[dict] = []
+    for s in df.itertuples():
+        room = ROOM_BY_ID[s.room_id]
+        slot = next(t for t in TIMETABLE if t.room_id == s.room_id and t.weekday == s.weekday
+                    and t.start_hour == s.start_hour)
+        need = int(s.max_people * 1.15) + 1
+        alt = _smallest_free(s.weekday, slot.start_hour, slot.end_hour, need, s.room_id,
+                             ("lecture", "tutorial") if room.kind == "lecture" else (room.kind,))
+        if not alt or ROOM_BY_ID[alt].ac_kw >= room.ac_kw:
             continue
-        util = g["avg_people"].sum() / (g["capacity"].sum() or 1)
+        saved = (room.ac_kw - ROOM_BY_ID[alt].ac_kw) * AC_DUTY * (slot.end_hour - slot.start_hour)
+        moves.append({"block": room.block, "module": s.module, "room_id": s.room_id, "day": DAYS[s.weekday],
+                      "time": slot.time_label, "seats": room.capacity, "avg_people": round(s.avg_people, 1),
+                      "peak_people": int(s.max_people), "move_to": alt,
+                      "move_to_seats": ROOM_BY_ID[alt].capacity, "kwh_saved": round(saved, 1)})
+    acts = []
+    for block in sorted({m["block"] for m in moves}):
+        rows = sorted((m for m in moves if m["block"] == block), key=lambda m: -m["kwh_saved"])
+        kwh = sum(m["kwh_saved"] for m in rows)
+        if kwh < 10:
+            continue
+        fill = sum(m["avg_people"] for m in rows) / sum(m["seats"] for m in rows)
+        top = rows[0]
+        label = BLOCK_LABEL.get(block, block)
         acts.append(Action(
             kind="right_size",
-            title=f"Move {module.split(' ')[0]} out of {room.name} on {len(moves)} day(s)",
-            summary=(f"{module} fills {util:.0%} of {rid}'s {room.capacity} seats. A smaller free room "
-                     f"fits the peak attendance with 15% headroom ({'; '.join(moves)})."),
-            rooms=[rid] + sorted({r["move_to"] for r in rows}), kwh_per_week=kwh,
-            evidence_sql=sql.replace("GROUP BY", f"AND room_id = '{rid}'\nGROUP BY"), evidence_rows=rows,
-            chart={"type": "bar", "label": f"Average attendance vs {room.capacity} seats",
-                   "x": [r["day"] for r in rows], "y": [r["avg_people"] for r in rows], "ref": room.capacity},
+            title=(f"Move {len(rows)} small classes out of the auditoriums" if block == "AUD"
+                   else f"Move {len(rows)} small classes out of {label} rooms"),
+            summary=(f"{len(rows)} timetabled classes a week fill only {fill:.0%} of their {label} seats. "
+                     f"Each fits a smaller free room with 15% headroom; for example {top['module']} "
+                     f"({top['day']} {top['time']}, about {top['avg_people']:.0f} people in {top['room_id']}) "
+                     f"fits {top['move_to']}."),
+            rooms=sorted({m["room_id"] for m in rows} | {m["move_to"] for m in rows}), kwh_per_week=kwh,
+            evidence_sql=sql, evidence_rows=[{k: v for k, v in m.items() if k != "block"} for m in rows],
+            chart={"type": "bar", "label": "Seats used (%) by class that could move",
+                   "x": [f"{m['module'].split(' ')[0]} {m['day']}" for m in rows[:12]],
+                   "y": [round(100 * m["avg_people"] / m["seats"]) for m in rows[:12]], "ref": 35},
         ))
     return acts
 
@@ -252,6 +263,8 @@ FROM v_network_daily WHERE device_id = '{h.device_id}' ORDER BY day DESC""",
     return acts
 
 
+MAX_PER_KIND = {"air_quality": 3}
+
 DETECTORS = (after_hours_cooling, schedule_driven_cooling, right_size_rooms, stale_air, data_reliability)
 
 
@@ -272,4 +285,10 @@ def build_actions(store: Store) -> list[dict]:
         reliability_pts = 90.0 if a.kind == "data_reliability" else 0.0
         a.score = round((max(a.rm_per_week, 0) + comfort_pts + reliability_pts) * (0.5 + a.confidence / 200), 2)
     actions.sort(key=lambda a: a.score, reverse=True)
-    return [a.as_dict() for a in actions]
+    # Keep the list readable: the strongest few of each kind; the rest stay queryable in Ask.
+    kept, seen = [], {}
+    for a in actions:
+        seen[a.kind] = seen.get(a.kind, 0) + 1
+        if seen[a.kind] <= MAX_PER_KIND.get(a.kind, 99):
+            kept.append(a)
+    return [a.as_dict() for a in kept]

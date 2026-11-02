@@ -11,13 +11,13 @@
     <!-- IoT -->
     <rect x="32" y="72" width="200" height="200" rx="4" fill="#F4F5F2" stroke="#1D2A30" stroke-width="2"/>
     <text x="48" y="100" font-size="17" font-weight="600">IoT · sense</text>
-    <text x="48" y="126">ESP32 node in B-03</text>
+    <text x="48" y="126">ESP32 node in B-08-05</text>
     <text x="48" y="146">PIR motion</text>
     <text x="48" y="166">SCD40 CO₂, temp, humidity</text>
     <text x="48" y="186">Current clamp: watts</text>
     <text x="48" y="206">RSSI, reports sent / acked</text>
-    <text x="48" y="236" fill="#5C6B71">+ 20 simulated rooms,</text>
-    <text x="48" y="254" fill="#5C6B71">labelled simulated=true</text>
+    <text x="48" y="236" fill="#5C6B71">+ 20 real APU rooms, real</text>
+    <text x="48" y="254" fill="#5C6B71">timetable, simulated sensors</text>
 
     <!-- Network -->
     <rect x="272" y="72" width="200" height="200" rx="4" fill="#F4F5F2" stroke="#1D2A30" stroke-width="2"/>
@@ -26,7 +26,7 @@
     <text x="288" y="146">MQTT QoS 1 to a broker</text>
     <text x="288" y="166">Bridge to HTTPS ingest</text>
     <text x="288" y="186">(or direct HTTPS)</text>
-    <text x="288" y="206">Gateways gw-a, gw-b, gw-c</text>
+    <text x="288" y="206">Gateways gw-aud, gw-b, gw-tl</text>
     <text x="288" y="236" fill="#5C6B71">Lost acks and silent</text>
     <text x="288" y="254" fill="#5C6B71">gateways become data</text>
 

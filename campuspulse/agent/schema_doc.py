@@ -6,7 +6,8 @@ Times in *_local, hour and day columns are Malaysia time (Asia/Kuala_Lumpur), ty
 weekday is 0 = Monday ... 6 = Sunday.
 
 v_room_hourly - one row per room per hour
-  room_id, room_name, block ('A','B','C'), kind ('lecture','lab','tutorial','study'), capacity,
+  room_id, room_name, block ('AUD' auditoriums, 'B' Block B classrooms, 'TL' Tech Labs),
+  kind ('lecture','tutorial','lab'), capacity,
   hour DATETIME, weekday, hour_of_day, reports, avg_people, max_people,
   occupied_frac (0-1, share of the hour the PIR saw motion), avg_co2_ppm, max_co2_ppm, avg_temp_c,
   ac_on_frac (0-1), kwh (energy used in that hour), utilisation (avg_people / capacity), simulated
@@ -32,4 +33,8 @@ Useful facts:
   * "This week" or "last 7 days": hour >= DATETIME_SUB((SELECT MAX(hour) FROM v_room_hourly), INTERVAL 7 DAY)
   * CO2 above 1000 ppm counts as stale air. Energy price is RM {tariff} per kWh (an assumption).
   * Prefer the v_ views; use readings only for minute-level questions.
+  * Rooms and the timetable are APU's real ones (Asia Pacific University, Bukit Jalil). Room ids:
+    AUD-1..AUD-6 are Auditoriums 1-6; B-08-05 is Block B, level 8, room 05; TL6-14 is Tech Lab 6-14.
+    module is the real module code and name, e.g. 'CT071 Designing and Developing Applications on the Cloud'.
+  * capacity and expected (estimated class size) are assumptions; APU does not publish them.
 """

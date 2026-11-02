@@ -1,8 +1,9 @@
 """The decision engine must find the problems planted in the simulator."""
 from campuspulse import analytics, decisions, network
 from campuspulse.agent.canned import CANNED
+from campuspulse.campus import ROOM_BY_ID
 from campuspulse.agent.gemini import _offline_answer
-from campuspulse.simulator import STUCK_SENSOR_ROOM, WEAK_LINK_ROOM, WEEKEND_AC_ROOM
+from campuspulse.simulator import OUTAGE_GATEWAY, STUCK_SENSOR_ROOM, WEAK_LINK_ROOM, WEEKEND_AC_ROOM
 
 
 def test_actions_cover_planted_problems(store):
@@ -13,8 +14,11 @@ def test_actions_cover_planted_problems(store):
     assert any(WEEKEND_AC_ROOM in a["rooms"] for a in after_hours)
     reliability_rooms = {r for a in acts if a["kind"] == "data_reliability" for r in a["rooms"]}
     assert {WEAK_LINK_ROOM, STUCK_SENSOR_ROOM} <= reliability_rooms
-    assert any(a["kind"] == "air_quality" and "B-01" in a["rooms"] for a in acts)
-    assert any(a["kind"] == "right_size" and "A-01" in a["rooms"] for a in acts)
+    # Emerge from APU's real timetable: small classes in auditoriums, crowded sessions with stale air.
+    assert any(a["kind"] == "right_size" and any(r.startswith("AUD-") for r in a["rooms"]) for a in acts)
+    assert any(a["kind"] == "air_quality" for a in acts)
+    assert {"AUD", "B", "TL"} <= {ROOM_BY_ID[r].block for a in acts
+                                  if a["kind"] == "occupancy_linked_ac" for r in a["rooms"]}
 
 
 def test_every_action_carries_evidence(store):
@@ -36,12 +40,12 @@ def test_network_flags_weak_and_stuck_nodes(store):
     assert health[WEAK_LINK_ROOM].level == "low"
     assert health[STUCK_SENSOR_ROOM].level != "high"
     assert any("stuck" in i for i in health[STUCK_SENSOR_ROOM].issues)
-    assert health["A-01"].level == "high"
+    assert health["AUD-1"].level == "high"
 
 
 def test_gateway_outage_detected(store):
     out = network.gateway_outages(store, days=7)
-    assert set(out["gateway_id"]) == {"gw-c"}
+    assert set(out["gateway_id"]) == {OUTAGE_GATEWAY}
 
 
 def test_kpis_and_room_detail(store):
@@ -56,3 +60,11 @@ def test_all_canned_questions_run(store):
     for c in CANNED:
         out = _offline_answer(store, c["q"])
         assert out["sql"], c["q"]
+
+
+def test_campus_uses_real_apu_timetable():
+    from campuspulse.campus import APU_TIMETABLE, ROOMS, TIMETABLE
+    assert all(r.apu_room in APU_TIMETABLE["rooms"] for r in ROOMS)
+    assert len(TIMETABLE) > 200
+    blob = str(APU_TIMETABLE)
+    assert "SAMACCOUNTNAME" not in blob and "LECTID" not in blob  # no lecturer data kept

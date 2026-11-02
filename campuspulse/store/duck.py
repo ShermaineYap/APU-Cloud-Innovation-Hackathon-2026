@@ -65,6 +65,10 @@ class DuckStore(Store):
                  row["kwh_per_week"], row["rm_per_week"], row["decided_by"]],
             )
 
+    def clear_readings(self) -> None:
+        with self.lock:
+            self.con.execute("DELETE FROM readings")
+
     def reading_count(self) -> int:
         with self.lock:
             return int(self.con.execute("SELECT COUNT(*) FROM readings").fetchall()[0][0])

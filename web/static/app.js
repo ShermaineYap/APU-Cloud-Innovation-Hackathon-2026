@@ -4,7 +4,7 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt = (n, d = 0) => (n == null || Number.isNaN(n) ? "–" : Number(n).toLocaleString("en-MY", { maximumFractionDigits: d, minimumFractionDigits: d }));
 const INK = "#1D2A30", MUTED = "#5C6B71", RULE = "#C3CAC5", TEAL = "#1F7A6D", BLUE = "#3B6EA8", AMBER = "#B87412", RED = "#A23B2C";
-const BLOCKS = { A: "Block A · Lecture theatres", B: "Block B · Tutorials and labs", C: "Block C · Study spaces" };
+const BLOCKS = { AUD: "Auditoriums", B: "Block B · Classrooms", TL: "Tech Labs" };
 const STATUS_TEXT = { in_use: "In use", empty_cooled: "Cooled, empty", stale_air: "CO₂ high", idle: "Empty", offline: "No data" };
 
 if (window.Chart) {
@@ -46,7 +46,7 @@ function renderStatus(m) {
     live ? `Live sensor in ${esc(m.live_room)} reporting` : `Live sensor in ${esc(m.live_room)} offline, showing simulated fleet`
   }`;
   $("#foot-mode").textContent =
-    `Data: 1 physical node in ${m.live_room} + 20 simulated rooms (labelled). Store: ${m.backend === "bigquery" ? "BigQuery" : "local DuckDB"}. ` +
+    `Data: 1 physical node in ${m.live_room} + 20 real APU rooms on their real timetable, sensors simulated (labelled). Store: ${m.backend === "bigquery" ? "BigQuery" : "local DuckDB"}. ` +
     `AI: ${m.gemini ? `Gemini ${m.model}` : "offline mode (no Gemini key)"}. Energy price assumption: RM ${m.tariff_rm_per_kwh}/kWh.`;
   $("#ask-mode").textContent = m.gemini
     ? "Gemini writes the SQL, CampusPulse checks it is read-only, the warehouse runs it."

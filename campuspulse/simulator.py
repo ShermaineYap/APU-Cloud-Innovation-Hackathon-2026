@@ -1,4 +1,4 @@
-"""Synthetic sensor fleet for the 20 demo rooms.
+"""Synthetic sensor fleet for the 20 real APU rooms in campus.py.
 
 Every row is labelled simulated=True. Only rows posted by the physical ESP32
 node carry simulated=False. The physics is deliberately simple but grounded:
@@ -7,15 +7,18 @@ node carry simulated=False. The physics is deliberately simple but grounded:
   temp  first-order approach to a set point, plus body heat
   power AC load * duty cycle + lighting + plug load
 
-Planted problems (the things the decision engine should find on its own):
-  * rooms cooled for hours while nobody is in them
-  * Auditorium 1 booked for a 60-student class
-  * Friday afternoon lectures with thin attendance
-  * DSA tutorial oversubscribed in a 40-seat room (CO2 above 1000 ppm)
+Classes follow APU's real timetable for the week (exact start and end times).
+What emerges from that timetable, not planted:
+  * rooms cooled on the building schedule between and after classes
+  * small classes booked into auditoriums
+  * many intakes sharing a classroom, pushing CO2 above 1000 ppm
+
+Planted problems (the decision engine must find them on its own):
+  * Friday afternoon auditorium lectures with thin attendance
   * Auditorium 2 AC left running over the last two weekends
-  * Discussion Room 1 node on a weak link (high packet loss)
-  * Block C gateway outage for four hours, five days ago
-  * Quiet Room CO2 sensor stuck for the last three days
+  * Tech Lab 7-01 node on a weak link (high packet loss)
+  * Tech Lab gateway outage for four hours, five days ago
+  * Tech Lab 4-02 CO2 sensor stuck for the last three days
 """
 from __future__ import annotations
 
@@ -32,10 +35,10 @@ OUTDOOR_CO2 = 420.0
 CO2_PER_PERSON_PPM_M3_H = 18_000.0  # 0.018 m3/h exhaled CO2, times 1e6 ppm
 STEP = timedelta(minutes=5)
 
-WEAK_LINK_ROOM = "C-02"
-STUCK_SENSOR_ROOM = "C-05"
-WEEKEND_AC_ROOM = "A-02"
-OUTAGE_GATEWAY = "gw-c"
+WEAK_LINK_ROOM = "TL7-01"
+STUCK_SENSOR_ROOM = "TL4-02"
+WEEKEND_AC_ROOM = "AUD-2"
+OUTAGE_GATEWAY = "gw-tl"
 
 
 @dataclass
@@ -74,17 +77,17 @@ class Fleet:
             load = (0.15 + 0.7 * peak) * (0.45 if wd >= 5 else 1.0)
             return int(min(room.capacity, self.rng.poisson(room.capacity * load)))
         for slot in slots_for(room.room_id, wd):
-            if slot.start_hour <= h < slot.end_hour:
+            if slot.start_min / 60 <= h < slot.end_min / 60:
                 key = (local.date(), slot.start_hour)
                 if key not in st.attendance:
                     f = float(np.clip(self.rng.normal(0.84, 0.07), 0.55, 1.0))
                     if self.rng.random() < 0.07:
                         f = 0.0  # cancelled class, room booked and cooled anyway
-                    if wd == 4 and slot.start_hour >= 13 and room.block == "A":
+                    if wd == 4 and slot.start_hour >= 13 and room.block == "AUD":
                         f *= 0.45  # Friday afternoon effect
                     st.attendance[key] = f
                 n = slot.expected * st.attendance[key]
-                if h - slot.start_hour < 1 / 6:
+                if h - slot.start_min / 60 < 1 / 6:
                     n *= 0.6  # people still arriving
                 return int(max(0, self.rng.normal(n, max(1.0, n * 0.04))))
         return 0

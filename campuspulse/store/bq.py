@@ -66,6 +66,9 @@ class BigQueryStore(Store):
         r = dict(row, decided_at=row["decided_at"].isoformat())
         self.client.insert_rows_json(f"{self.ds}.decisions", [r])
 
+    def clear_readings(self) -> None:
+        self.client.query(self.qualify("TRUNCATE TABLE readings")).result()
+
     def reading_count(self) -> int:
         df = self.query("SELECT COUNT(*) AS n FROM readings")
         return int(df["n"].iloc[0])

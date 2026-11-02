@@ -33,7 +33,7 @@ def test_ask_recovers_from_bad_sql(store, monkeypatch):
 
     out = gemini.ask(store, "Which room wasted the most?")
     assert out["answer"] == "Auditorium 2 wasted the most."
-    assert out["rows"][0]["room_id"] == "A-02"
+    assert out["rows"][0]["room_id"].startswith("AUD-")
     assert [a["ok"] for a in out["attempts"]] == [False, True]
     error_part = fake.seen[1].parts[0].function_response.response
     assert "only SELECT" in error_part["error"]

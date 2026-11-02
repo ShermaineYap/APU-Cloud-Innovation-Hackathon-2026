@@ -70,6 +70,9 @@ async def lifespan(app: FastAPI):
     store = get_store()
     store.setup()
     fleet = Fleet()
+    if store.reading_count() and store.stale_rooms():
+        log.info("Campus model changed; clearing old readings")
+        store.clear_readings()
     if store.reading_count() == 0:
         log.info("Seeding %d days of simulated history", settings.history_days)
         store.insert_readings(fleet.history())

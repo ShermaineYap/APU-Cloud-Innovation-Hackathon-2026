@@ -1,13 +1,31 @@
-"""The demo campus: three blocks, twenty rooms, one weekly timetable.
+"""The demo campus: twenty real APU rooms and their real teaching week.
 
-Room ids, capacities and AC loads are illustrative, not APU's real estate data.
-Swap this module for a CSV export from the timetabling office to go live.
+Real, from APU's public timetable feed (campuspulse/data/apu_timetable.json,
+refreshed with scripts/import_apu_timetable.py):
+  * room names and codes (B-08-05 is Block B, level 8, room 05)
+  * which module is taught in each room, on which day, from when to when
+  * how many intakes share each session
+
+Assumed, because APU does not publish them:
+  * seat capacity and air-conditioning load of each room
+  * class size, estimated as STUDENTS_PER_INTAKE per intake sharing the session,
+    capped at the room's seats
+
+Sensor readings are simulated (see simulator.py) except the one live ESP32 node.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+import json
+import os
+from dataclasses import asdict, dataclass, field
 
-LIVE_ROOM = "B-03"  # the room wired with the real ESP32 node
+LIVE_ROOM = os.getenv("CP_LIVE_ROOM", "B-08-05")  # the room wired with the real ESP32 node
+STUDENTS_PER_INTAKE = 12  # assumption: average students per intake attending a shared session
+
+_DATA = os.path.join(os.path.dirname(__file__), "data", "apu_timetable.json")
+with open(_DATA, encoding="utf-8") as _fh:
+    APU_TIMETABLE = json.load(_fh)
+WEEK_OF: str = APU_TIMETABLE["week_of"]
 
 
 @dataclass(frozen=True)
@@ -16,95 +34,95 @@ class Room:
     name: str
     block: str
     floor: int
-    kind: str  # lecture | lab | tutorial | study
-    capacity: int
-    ac_kw: float  # nominal cooling electrical load
+    kind: str  # lecture | tutorial | lab
+    capacity: int  # assumed
+    ac_kw: float  # assumed nominal cooling electrical load
     gateway_id: str
     col: int  # position on the floor-plan grid
     row: int
+    apu_room: str = field(default="", compare=False)  # exact name in APU's timetable
 
     def as_row(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d.pop("apu_room")
+        return d
 
 
-def _r(room_id, name, kind, cap, ac, col, row, floor=1):
-    block = room_id[0]
-    return Room(room_id, name, block, floor, kind, cap, ac, f"gw-{block.lower()}", col, row)
+BLOCK_NAMES = {"AUD": "Auditoriums", "B": "Block B · Classrooms", "TL": "Tech Labs"}
+BLOCK_LABEL = {"AUD": "auditorium", "B": "Block B", "TL": "Tech Lab"}  # used in sentences
 
-
-ROOMS: list[Room] = [
-    # Block A: big lecture theatres
-    _r("A-01", "Auditorium 1", "lecture", 220, 18.0, 0, 0),
-    _r("A-02", "Auditorium 2", "lecture", 180, 15.0, 2, 0),
-    _r("A-03", "Lecture Hall 3", "lecture", 120, 10.5, 0, 1),
-    _r("A-04", "Lecture Hall 4", "lecture", 120, 10.5, 1, 1),
-    _r("A-05", "Lecture Hall 5", "lecture", 90, 8.0, 2, 1),
-    _r("A-06", "Lecture Hall 6", "lecture", 90, 8.0, 3, 1),
-    # Block B: tutorial rooms and labs
-    _r("B-01", "Tutorial Room 1", "tutorial", 40, 3.5, 0, 0),
-    _r("B-02", "Tutorial Room 2", "tutorial", 40, 3.5, 1, 0),
-    _r("B-03", "Tutorial Room 3", "tutorial", 40, 3.5, 2, 0),
-    _r("B-04", "Tutorial Room 4", "tutorial", 30, 3.0, 3, 0),
-    _r("B-05", "Networking Lab", "lab", 36, 5.5, 0, 1),
-    _r("B-06", "IoT Lab", "lab", 30, 5.0, 1, 1),
-    _r("B-07", "Cloud Lab", "lab", 36, 5.5, 2, 1),
-    _r("B-08", "Data Lab", "lab", 36, 5.5, 3, 1),
-    # Block C: study spaces
-    _r("C-01", "Library Study Zone", "study", 80, 7.0, 0, 0),
-    _r("C-02", "Discussion Room 1", "study", 12, 1.5, 1, 0),
-    _r("C-03", "Discussion Room 2", "study", 12, 1.5, 2, 0),
-    _r("C-04", "Discussion Room 3", "study", 12, 1.5, 3, 0),
-    _r("C-05", "Quiet Room", "study", 24, 2.5, 0, 1),
-    _r("C-06", "Postgrad Room", "study", 20, 2.0, 1, 1),
+# (room_id, display name, block, floor, kind, seats, AC kW, APU timetable name)
+_SPEC = [
+    ("AUD-1", "Auditorium 1 · Level 7", "AUD", 7, "lecture", 200, 16.0, "Auditorium 1 @ Level 7"),
+    ("AUD-2", "Auditorium 2 · Level 6", "AUD", 6, "lecture", 160, 13.5, "Auditorium 2 @ Level 6"),
+    ("AUD-3", "Auditorium 3 · Block C L9", "AUD", 9, "lecture", 180, 15.0, "Auditorium 3 @ Block C Level 9"),
+    ("AUD-4", "Auditorium 4 · Level 3", "AUD", 3, "lecture", 120, 10.5, "Auditorium 4 @ Level 3"),
+    ("AUD-5", "Auditorium 5 · Level 3", "AUD", 3, "lecture", 120, 10.5, "Auditorium 5 @ Level 3"),
+    ("AUD-6", "Auditorium 6 · Block C L3", "AUD", 3, "lecture", 160, 13.5, "Auditorium 6 @ Block C Level 3"),
+    ("B-06-03", "Classroom B-06-03", "B", 6, "tutorial", 50, 4.5, "B-06-03"),
+    ("B-06-10", "Classroom B-06-10", "B", 6, "tutorial", 50, 4.5, "B-06-10"),
+    ("B-07-02", "Classroom B-07-02", "B", 7, "tutorial", 50, 4.5, "B-07-02"),
+    ("B-07-04", "Classroom B-07-04", "B", 7, "tutorial", 50, 4.5, "B-07-04"),
+    ("B-08-03", "Classroom B-08-03", "B", 8, "tutorial", 50, 4.5, "B-08-03"),
+    ("B-08-05", "Classroom B-08-05", "B", 8, "tutorial", 50, 4.5, "B-08-05"),
+    ("B-08-09", "Classroom B-08-09", "B", 8, "tutorial", 50, 4.5, "B-08-09"),
+    ("B-09-06", "Classroom B-09-06", "B", 9, "tutorial", 50, 4.5, "B-09-06"),
+    ("TL4-02", "Tech Lab 4-02", "TL", 4, "lab", 40, 5.0, "Tech Lab 4-02"),
+    ("TL4-07", "Tech Lab 4-07", "TL", 4, "lab", 40, 5.0, "Tech Lab 4-07"),
+    ("TL6-02", "Tech Lab 6-02", "TL", 6, "lab", 40, 5.0, "Tech Lab 6-02"),
+    ("TL6-11", "Tech Lab 6-11", "TL", 6, "lab", 40, 5.0, "Tech Lab 6-11"),
+    ("TL6-14", "Tech Lab 6-14", "TL", 6, "lab", 40, 5.0, "Tech Lab 6-14"),
+    ("TL7-01", "Tech Lab 7-01", "TL", 7, "lab", 40, 5.0, "Tech Lab 7-01"),
 ]
 
-ROOM_BY_ID = {r.room_id: r for r in ROOMS}
 
-BLOCK_NAMES = {"A": "Block A · Lecture theatres", "B": "Block B · Tutorials and labs", "C": "Block C · Study spaces"}
+def _rooms() -> list[Room]:
+    out, pos = [], {}
+    for rid, name, block, floor, kind, cap, ac, apu in _SPEC:
+        i = pos.get(block, 0)
+        pos[block] = i + 1
+        out.append(Room(rid, name, block, floor, kind, cap, ac, f"gw-{block.lower()}", i % 4, i // 4, apu))
+    return out
+
+
+ROOMS: list[Room] = _rooms()
+ROOM_BY_ID = {r.room_id: r for r in ROOMS}
 
 
 @dataclass(frozen=True)
 class Slot:
     room_id: str
     weekday: int  # 0 = Monday
-    start_hour: int
-    end_hour: int
+    start_hour: int  # nearest hour to the start (08:30 -> 9, 10:45 -> 11)
+    end_hour: int  # nearest hour to the end, exclusive (10:30 -> 11, 12:45 -> 13)
     module: str
-    expected: int
+    expected: int  # estimated students (see STUDENTS_PER_INTAKE)
+    start_min: int = field(default=0, compare=False)  # exact times, minutes after midnight
+    end_min: int = field(default=0, compare=False)
+    intakes: int = field(default=1, compare=False)
 
     def as_row(self) -> dict:
-        return asdict(self)
+        return {k: getattr(self, k) for k in ("room_id", "weekday", "start_hour", "end_hour", "module", "expected")}
+
+    @property
+    def time_label(self) -> str:
+        f = lambda m: f"{m // 60:02d}:{m % 60:02d}"  # noqa: E731
+        return f"{f(self.start_min)}–{f(self.end_min)}"
+
+
+def _hour(minutes: int) -> int:
+    return int(minutes / 60 + 0.5)
 
 
 def _timetable() -> list[Slot]:
-    """A plausible teaching week with a few deliberate mismatches.
-
-    The mismatches are what the decision engine should find:
-      * CT118 is booked into Auditorium 1 (220 seats) for 60 students.
-      * Friday afternoon lectures in Block A are thinly attended.
-      * DSA tutorials in B-01 are oversubscribed for a 40-seat room.
-    """
-    s: list[Slot] = []
-    add = lambda *a: s.append(Slot(*a))  # noqa: E731
-    for d in range(5):
-        add("A-01", d, 9, 11, "CT046 Cloud Infrastructure", 190)
-        add("A-01", d, 14, 16, "CT118 Optimisation and Deep Learning", 60)
-        add("A-02", d, 10, 12, "CT124 Network Security", 150)
-        add("A-03", d, 8, 10, "CT088 Data Management", 100)
-        add("A-03", d, 13, 15, "CT112 IoT Systems", 95)
-        add("A-04", d, 11, 13, "CT097 Software Engineering", 110)
-        add("A-05", d, 9, 11, "CT069 Statistics", 70)
-        add("A-06", d, 15, 17, "CT075 Business Analytics", 80)
-        add("B-01", d, 10, 12, "CT050 DSA Tutorial", 52)
-        add("B-02", d, 14, 16, "CT046 Cloud Tutorial", 32)
-        add("B-03", d, 9, 11, "CT112 IoT Tutorial", 34)
-        add("B-03", d, 15, 17, "CT124 Security Tutorial", 30)
-        add("B-04", d, 11, 13, "CT069 Statistics Tutorial", 26)
-        add("B-05", d, 13, 16, "CT124 Networking Practical", 32)
-        add("B-06", d, 9, 12, "CT112 IoT Practical", 28)
-        add("B-07", d, 14, 17, "CT046 Cloud Practical", 34)
-        add("B-08", d, 10, 13, "CT088 Data Practical", 30)
-    return s
+    slots = []
+    for room in ROOMS:
+        for s in APU_TIMETABLE["rooms"].get(room.apu_room, []):
+            expected = min(room.capacity, max(8, s["intakes"] * STUDENTS_PER_INTAKE))
+            start, end = _hour(s["start_min"]), max(_hour(s["start_min"]) + 1, _hour(s["end_min"]))
+            slots.append(Slot(room.room_id, s["weekday"], start, end,
+                              s["module"], expected, s["start_min"], s["end_min"], s["intakes"]))
+    return slots
 
 
 TIMETABLE: list[Slot] = _timetable()
