@@ -73,8 +73,37 @@ Rules:
 - Round kWh and RM to whole numbers with thousands separators (3,846 kWh, RM 1,923). Show fractions such as utilisation as percentages (0.413 -> 41%). Do not mention action ids or field names.
 - Keep the engine's ranking unless confidence is low; a low-confidence action must say what to check first.
 - Plain, direct English. No hype, no emoji.
+The headline states the single most important finding as a plain sentence (for example the share of
+cooling spent on empty rooms); do not start it with "Morning brief". Copy numbers exactly as written.
 Return JSON: {"headline": str (max 14 words), "summary": str (max 60 words),
  "items": [{"id": str, "why_now": str (max 30 words), "first_step": str (max 20 words)}]} for up to 5 actions."""
+
+
+def _model_payload(kpis: dict, actions: list[dict]) -> dict:
+    """Numbers pre-formatted for reading, so the model copies '3,856 kWh', not '3856.0'."""
+    def kwh(v): return f"{round(float(v or 0)):,} kWh"
+    def rm(v): return f"RM {round(float(v or 0)):,}"
+    def pct(v): return f"{round(float(v or 0) * 100)}%"
+    k = {
+        "window": kpis.get("window", "last 7 days"),
+        "cooling_energy_spent_on_empty_rooms": kwh(kpis.get("wasted_kwh")),
+        "cost_of_that_energy": rm(kpis.get("wasted_rm")),
+        "share_of_all_cooling_energy_spent_on_empty_rooms": pct(kpis.get("wasted_share")),
+        "occupied_room_hours_with_stale_air": kpis.get("stale_air_hours"),
+        "average_booked_room_utilisation": pct(kpis.get("avg_utilisation")),
+        "fleet_data_confidence": f"{kpis.get('fleet_confidence')}/100",
+        "sensor_nodes_with_low_confidence": kpis.get("low_confidence_nodes"),
+    }
+    acts = []
+    for a in actions[:8]:
+        acts.append({
+            "id": a["id"], "kind": a["kind"], "title": a["title"], "summary": a["summary"],
+            "weekly_saving": kwh(a.get("kwh_per_week")) if a.get("kwh_per_week") else None,
+            "weekly_saving_rm": rm(a.get("rm_per_week")) if a.get("rm_per_week") else None,
+            "confidence": f"{a.get('confidence_level')} ({a.get('confidence')}/100)",
+            "rooms": a.get("rooms"),
+        })
+    return {"kpis": k, "actions": acts}
 
 
 def _fallback_brief(actions: list[dict], kpis: dict) -> dict:
@@ -131,9 +160,7 @@ def daily_brief(actions: list[dict], kpis: dict) -> dict:
         return _fallback_brief(actions, kpis)
     from google.genai import types
 
-    payload = {"kpis": kpis, "actions": [
-        {k: a[k] for k in ("id", "kind", "title", "summary", "kwh_per_week", "rm_per_week", "comfort",
-                           "confidence", "confidence_level", "rooms")} for a in actions[:8]]}
+    payload = _model_payload(kpis, actions)
     try:
         client = _client()
         try:
