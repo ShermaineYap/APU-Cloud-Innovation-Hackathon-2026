@@ -390,11 +390,105 @@ async function loadNetwork() {
 /* ---------- boot ---------- */
 let lastBrief = null;
 
-async function loadOverview() {
-  const o = await api("/api/overview");
+/* ---------- demo clock: replay the floor plan at a past time ---------- */
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+let replayAt = null;          // "YYYY-MM-DDTHH:MM" local, or null for live
+let replayRangeSet = false;
+let playTimer = null;
+const pad = (n) => String(n).padStart(2, "0");
+const hhmm = (h) => `${pad(Math.floor(h))}:${pad(Math.round((h % 1) * 60))}`;
+const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+function setupReplayDays(range) {
+  if (replayRangeSet || !range) return;
+  replayRangeSet = true;
+  const last = new Date(range.last), first = new Date(range.first);
+  const firstDay = new Date(first.getFullYear(), first.getMonth(), first.getDate());
+  const sel = $("#replay-day");
+  const keep = sel.value;               // a day chosen from a ?at= link
+  const days = [];
+  for (let i = 1; i <= 7; i++) {        // the last 7 full days, newest first
+    const d = new Date(last.getFullYear(), last.getMonth(), last.getDate() - i);
+    if (d >= firstDay) days.push(d);
+  }
+  sel.innerHTML = days.map((d) =>
+    `<option value="${ymd(d)}">${WEEKDAYS[d.getDay()]} ${d.getDate()} ${d.toLocaleString("en-MY", { month: "short" })}</option>`).join("");
+  if (keep && days.some((d) => ymd(d) === keep)) { sel.value = keep; return; }
+  // Default to the most recent busy teaching day: Wednesday if present, else any weekday.
+  const pick = days.find((d) => d.getDay() === 3) || days.find((d) => d.getDay() >= 1 && d.getDay() <= 5);
+  if (pick) sel.value = ymd(pick);
+}
+
+function replayValue() {
+  return `${$("#replay-day").value}T${hhmm(Number($("#replay-hour").value))}`;
+}
+
+function replayLabel() {
+  const opt = $("#replay-day").selectedOptions[0];
+  return `${opt ? opt.textContent : ""}, ${hhmm(Number($("#replay-hour").value))}`;
+}
+
+function renderReplayUi() {
+  const on = replayAt != null;
+  $("#replay").classList.toggle("replaying", on);
+  $("#replay-live").setAttribute("aria-pressed", String(!on));
+  $("#replay-time").textContent = hhmm(Number($("#replay-hour").value));
+  $("#replay-play").textContent = playTimer ? "\u275A\u275A Pause" : "\u25B6 Play the day";
+  if (on) {
+    $("#plan-title").textContent = `Rooms on ${replayLabel()}`;
+    $("#plan-hint").textContent = "Replaying recorded readings. Press Live to return to now.";
+    $("#quiet-nudge").hidden = true;
+  } else {
+    $("#plan-title").textContent = "Rooms right now";
+    $("#plan-hint").textContent = "Select a room for its last 48 hours and tomorrow's forecast.";
+  }
+}
+
+let replayFetch = 0;
+async function goReplay(at) {
+  replayAt = at;
+  renderReplayUi();
+  const ticket = ++replayFetch;
+  const o = await api(at ? `/api/overview?at=${encodeURIComponent(at)}` : "/api/overview");
+  if (ticket !== replayFetch) return;   // a newer request superseded this one
+  applyOverview(o);
+}
+
+function stopPlay() {
+  clearInterval(playTimer);
+  playTimer = null;
+  renderReplayUi();
+}
+
+function startPlay() {
+  const slider = $("#replay-hour");
+  if (Number(slider.value) >= Number(slider.max)) slider.value = slider.min;
+  playTimer = setInterval(() => {
+    const next = Number(slider.value) + 0.5;
+    if (next > Number(slider.max)) return stopPlay();
+    slider.value = next;
+    goReplay(replayValue()).catch(() => {});
+  }, 1100);
+  goReplay(replayValue()).catch(() => {});
+}
+
+$("#replay-hour").addEventListener("input", () => { stopPlay(); goReplay(replayValue()).catch((e) => toast(e.message)); });
+$("#replay-day").addEventListener("change", () => goReplay(replayValue()).catch((e) => toast(e.message)));
+$("#replay-live").addEventListener("click", () => { stopPlay(); goReplay(null).catch((e) => toast(e.message)); });
+$("#replay-play").addEventListener("click", () => (playTimer ? stopPlay() : startPlay()));
+$("#quiet-replay").addEventListener("click", () => startPlay());
+
+function applyOverview(o) {
   mode = o.mode;
+  setupReplayDays(o.replay_range);
+  if (replayAt) renderReplayUi();
   renderStatus(o.mode);
   renderPlan(o.rooms);
+  if (o.replay_at) {
+    $("#status").innerHTML = `<span class="dot"></span>Replaying recorded readings from ${esc(replayLabel())}`;
+    return o;
+  }
+  $("#quiet-nudge").hidden = !o.rooms.every((r) => r.status === "idle" || r.status === "offline");
   const cams = o.rooms.filter((r) => r.people_source === "camera").map((r) => r.room_id);
   const sensorLive = o.rooms.some((r) => r.simulated === false);
   if (cams.length) {
@@ -402,6 +496,11 @@ async function loadOverview() {
       `Camera counting people in ${esc(cams.join(", "))}${sensorLive ? "" : "; other readings simulated"}`;
   }
   return o;
+}
+
+async function loadOverview() {
+  const o = await api(replayAt ? `/api/overview?at=${encodeURIComponent(replayAt)}` : "/api/overview");
+  return applyOverview(o);
 }
 
 async function loadBrief(refresh = false) {
@@ -426,6 +525,18 @@ async function restoreDecisions() {
     const log = await api("/api/decisions");
     for (const d of log) if (!decided.has(d.action_id)) decided.set(d.action_id, d.status); // newest first
   } catch { /* the log is optional */ }
+}
+
+// A link like /?at=2026-11-04T10:30 opens straight into replay (handy for demos and the video).
+{
+  const at = new URLSearchParams(location.search).get("at");
+  const m = at && at.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})$/);
+  if (m) {
+    replayAt = at;
+    $("#replay-day").innerHTML = `<option value="${m[1]}">${m[1]}</option>`;
+    $("#replay-day").value = m[1];
+    $("#replay-hour").value = Number(m[2]) + Number(m[3]) / 60;
+  }
 }
 
 restoreDecisions().then(() => loadBrief()).catch((e) => { $("#headline").textContent = "CampusPulse could not reach its data service."; $("#figures").textContent = e.message; });

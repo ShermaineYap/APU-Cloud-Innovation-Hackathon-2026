@@ -83,3 +83,23 @@ def test_caption_and_report():
         r = c.get("/api/report.pdf")
         assert r.status_code == 200 and r.content[:5] == b"%PDF-"
         assert "attachment" in r.headers["content-disposition"]
+
+
+def test_overview_replays_a_past_time():
+    import pandas as pd
+    with client() as c:
+        live = c.get("/api/overview").json()
+        assert live["replay_at"] is None
+        last = pd.Timestamp(live["replay_range"]["last"])
+        # The most recent Wednesday before the last reading, mid-morning: classes are on.
+        wed = (last - pd.Timedelta(days=(last.weekday() - 2) % 7 or 7)).normalize()
+        busy = c.get("/api/overview", params={"at": f"{wed:%Y-%m-%d}T11:00"}).json()
+        assert busy["replay_at"].startswith(f"{wed:%Y-%m-%d}T11:00")
+        assert any(r["status"] in ("in_use", "stale_air") for r in busy["rooms"])
+        # Saturday afternoon: the planted weekend fault leaves AUD-2 cooled while empty.
+        sat = wed + pd.Timedelta(days=3)
+        if sat < last:
+            weekend = {r["room_id"]: r for r in c.get("/api/overview", params={"at": f"{sat:%Y-%m-%d}T14:00"}).json()["rooms"]}
+            assert weekend["AUD-2"]["status"] == "empty_cooled"
+        assert c.get("/api/overview", params={"at": "not-a-time"}).status_code == 422
+        assert c.get("/").headers["cache-control"] == "no-cache"

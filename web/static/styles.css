@@ -252,3 +252,17 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* ---------- demo clock / replay ---------- */
+.replay { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; margin: -0.3rem 0 0.9rem; padding: 0.55rem 0.7rem; background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; }
+.replay select { font: inherit; padding: 0.3rem 0.4rem; border: 1px solid var(--rule); border-radius: 3px; background: #fff; color: var(--ink); }
+.replay input[type=range] { flex: 1 1 140px; min-width: 120px; accent-color: var(--ink); }
+.replay output { font-family: var(--cond); font-weight: 600; font-size: 1.1rem; min-width: 3.2rem; font-variant-numeric: tabular-nums; }
+.replay .chip-btn[aria-pressed="true"] { background: var(--good); border-color: var(--good); color: #fff; }
+.replay .chip-btn[aria-pressed="false"] { background: transparent; border: 1px solid var(--rule); color: var(--ink); }
+.replay.replaying { border-color: var(--cooled); box-shadow: inset 3px 0 0 var(--cooled); }
+.quiet-nudge { margin: -0.4rem 0 0.9rem; font-size: var(--step--1); color: var(--muted); }
+.linkish { background: none; border: 0; padding: 0; font: inherit; color: var(--cooled); text-decoration: underline; cursor: pointer; }
+
+/* Status tag sits on its own line so it never covers the room code in narrow cards. */
+.room .tag, .room .live { position: static; align-self: flex-end; line-height: 1; margin: -0.1rem -0.1rem 0.15rem 0; white-space: nowrap; }

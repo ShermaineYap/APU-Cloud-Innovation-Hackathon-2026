@@ -35,8 +35,18 @@
       <div class="plan-wrap" aria-labelledby="plan-title">
         <div class="section-head">
           <h2 id="plan-title">Rooms right now</h2>
-          <p class="hint">Select a room for its last 48 hours and tomorrow's forecast.</p>
+          <p class="hint" id="plan-hint">Select a room for its last 48 hours and tomorrow's forecast.</p>
         </div>
+        <div class="replay" id="replay" role="group" aria-label="Demo clock: replay the floor plan at another time">
+          <button type="button" class="chip-btn" id="replay-live" aria-pressed="true">Live</button>
+          <label class="visually-hidden" for="replay-day">Day to replay</label>
+          <select id="replay-day"></select>
+          <label class="visually-hidden" for="replay-hour">Time to replay</label>
+          <input type="range" id="replay-hour" min="7" max="21.5" step="0.5" value="10.5">
+          <output id="replay-time" for="replay-hour">10:30</output>
+          <button type="button" class="ghost" id="replay-play">&#9654; Play the day</button>
+        </div>
+        <p class="quiet-nudge" id="quiet-nudge" hidden>The campus is quiet right now. <button type="button" class="linkish" id="quiet-replay">Replay a teaching day</button> to see the rooms in use.</p>
         <div id="plan" class="plan"></div>
         <dl class="legend">
           <div><dt><span class="swatch in_use"></span></dt><dd>In use</dd></div>

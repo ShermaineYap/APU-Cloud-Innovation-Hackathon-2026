@@ -19,10 +19,29 @@ def _now_local(store: Store) -> pd.Timestamp:
     return pd.Timestamp(store.query("SELECT MAX(ts_local) AS t FROM readings")["t"].iloc[0])
 
 
-def room_states(store: Store) -> list[dict]:
+def _utc_literal(at_local: pd.Timestamp) -> str:
+    """A local wall-clock time as a BigQuery UTC TIMESTAMP literal."""
+    t = pd.Timestamp(at_local)
+    t = (t.tz_localize(settings.timezone) if t.tzinfo is None else t).tz_convert("UTC")
+    return f"TIMESTAMP '{t:%Y-%m-%d %H:%M:%S}+00'"
+
+
+def replay_range(store: Store) -> dict:
+    """First and last local times the demo clock can replay."""
+    r = store.query("SELECT MIN(ts_local) AS first, MAX(ts_local) AS last FROM readings").iloc[0]
+    return {"first": pd.Timestamp(r["first"]).isoformat(), "last": pd.Timestamp(r["last"]).isoformat()}
+
+
+def room_states(store: Store, at: pd.Timestamp | None = None) -> list[dict]:
+    """Every room's state now, or as it was at a past local time (demo clock / replay)."""
+    if at is None:
+        anchor, upto = "(SELECT MAX(ts) FROM readings)", ""
+    else:
+        anchor = _utc_literal(at)
+        upto = f"AND ts <= {anchor}"
     latest = store.query(f"""
         SELECT * FROM readings
-        WHERE ts >= TIMESTAMP_SUB((SELECT MAX(ts) FROM readings), INTERVAL 2 HOUR)
+        WHERE ts >= TIMESTAMP_SUB({anchor}, INTERVAL 2 HOUR) {upto}
           AND NOT STARTS_WITH(device_id, '{CAMERA_PREFIX}')
         QUALIFY ROW_NUMBER() OVER (PARTITION BY room_id ORDER BY ts DESC, simulated ASC) = 1
     """)
@@ -30,7 +49,7 @@ def room_states(store: Store) -> list[dict]:
     cams = store.query(f"""
         SELECT room_id, people, device_id, ts FROM readings
         WHERE STARTS_WITH(device_id, '{CAMERA_PREFIX}')
-          AND ts >= TIMESTAMP_SUB((SELECT MAX(ts) FROM readings), INTERVAL {STALE_AFTER_MIN} MINUTE)
+          AND ts >= TIMESTAMP_SUB({anchor}, INTERVAL {STALE_AFTER_MIN} MINUTE) {upto}
         QUALIFY ROW_NUMBER() OVER (PARTITION BY room_id ORDER BY ts DESC) = 1
     """)
     cam_by_room = {c.room_id: c for c in cams.itertuples()}
@@ -122,7 +141,7 @@ def seasonal_forecast(hist: pd.DataFrame, horizon_h: int = 24, col: str = "avg_p
                                        high=lambda s: s.quantile(0.9))
     start = hist["hour"].max() + pd.Timedelta(hours=1)
     future = pd.DataFrame({"hour": pd.date_range(start, periods=horizon_h, freq="h")})
-    future["how"] = future["hour"].dt.weekday * 24 + future["hour"].dt.hour
+    future["how"] = future["hour"].dt.dayofweek * 24 + future["hour"].dt.hour
     future = future.join(stats, on="how").fillna(0.0)
     return future[["hour", "forecast", "low", "high"]]
 

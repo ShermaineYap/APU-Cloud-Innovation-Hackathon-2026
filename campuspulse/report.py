@@ -116,7 +116,7 @@ def build_pdf(brief: dict, actions: list[dict], kpis: dict, status: dict[str, st
     live = ("Live hardware (sensor node or edge camera) replaces the simulated readings for the rooms it covers; "
             "the other readings") if mode.get("live_node_online") else "Sensor readings"
     story.append(_p(
-        f"Rooms and classes are APU's real timetable for the week of {date.fromisoformat(WEEK_OF):%-d %B %Y} "
+        f"Rooms and classes are APU's real timetable for the week of {date.fromisoformat(WEEK_OF).day} {date.fromisoformat(WEEK_OF):%B %Y} "
         f"(public APSpace timetable feed). "
         f"{live} are simulated and labelled as such. Seat counts, AC loads and class sizes are estimates "
         f"(about 12 students per intake); energy is priced at RM {settings.tariff_rm_per_kwh:.2f}/kWh. "

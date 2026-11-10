@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
+import pandas as pd
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -208,12 +209,23 @@ def health():
 
 
 @app.get("/api/overview")
-def overview():
+def overview(at: str | None = None):
+    """KPIs and room states. `at` (local time, e.g. 2026-11-04T10:00) replays the floor plan as it was then."""
     store = get_store()
+    replay = None
+    if at:
+        try:
+            replay = pd.Timestamp(at)
+        except ValueError:
+            raise HTTPException(422, "at must be a local date-time like 2026-11-04T10:00")
+        if replay.tzinfo is not None:
+            replay = replay.tz_convert(settings.timezone).tz_localize(None)
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "kpis": cache.get("kpis", 60, lambda: analytics.kpis(store)),
-        "rooms": analytics.room_states(store),
+        "rooms": analytics.room_states(store, at=replay),
+        "replay_at": replay.isoformat() if replay is not None else None,
+        "replay_range": cache.get("replay_range", 300, lambda: analytics.replay_range(store)),
         "mode": _mode(),
     }
 
@@ -322,6 +334,15 @@ def ask_suggestions():
 
 
 # --- web app --------------------------------------------------------------------
+
+@app.middleware("http")
+async def revalidate_web_app(request: Request, call_next):
+    """Browsers must revalidate the dashboard files, so a redeploy is never hidden behind a stale cache."""
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
 
 @app.get("/")
 def index():
