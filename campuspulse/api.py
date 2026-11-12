@@ -14,6 +14,7 @@ from typing import Literal
 
 import pandas as pd
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
@@ -55,6 +56,11 @@ class Cache:
         with self.lock:
             self.data.clear()
 
+    def drop(self, prefix: str):
+        with self.lock:
+            for k in [k for k in self.data if k.startswith(prefix)]:
+                del self.data[k]
+
 
 cache = Cache()
 state = {"last_real": None, "real_count": 0, "started": datetime.now(timezone.utc), "real_rooms": {}}
@@ -66,31 +72,53 @@ def _real_kinds(room_id: str, within_s: int = 300) -> set[str]:
             if rid == room_id and (now - t).total_seconds() < within_s}
 
 
+def _store_simulated(rows: list[dict]) -> None:
+    """Write simulated rows. Where real hardware is reporting, it replaces the simulated twin:
+    a live sensor node replaces the whole row, a live camera replaces just the head count."""
+    out = []
+    for r in rows:
+        kinds = _real_kinds(r["room_id"])
+        if "sensor" in kinds:
+            continue
+        if "camera" in kinds:
+            r = r | {"people": None}
+        out.append(r)
+    if out:
+        get_store().insert_readings(out)
+        cache.drop("overview")
+
+
 def _live_loop(fleet: Fleet, stop: threading.Event):
-    store = get_store()
     while not stop.wait(30):
         try:
             _sync_control()
-            rows = fleet.tick(datetime.now(timezone.utc))
-            # Where real hardware is reporting, it replaces the simulated twin: a live sensor node
-            # replaces the whole row, a live camera replaces just the head count.
-            out = []
-            for r in rows:
-                kinds = _real_kinds(r["room_id"])
-                if "sensor" in kinds:
-                    continue
-                if "camera" in kinds:
-                    r = r | {"people": None}
-                out.append(r)
-            store.insert_readings(out)
+            _store_simulated(fleet.tick(datetime.now(timezone.utc)))
         except Exception:  # keep the demo alive
             log.exception("live simulator tick failed")
+
+
+sim = {"fleet": None, "lock": threading.Lock()}
+
+
+def _catch_up() -> None:
+    """Request mode: produce the readings a background loop would have written since the last request."""
+    fleet = sim["fleet"]
+    if fleet is None or not sim["lock"].acquire(blocking=False):
+        return  # not started, or another request is already catching up
+    try:
+        _sync_control()
+        _store_simulated(fleet.catch_up(datetime.now(timezone.utc)))
+    except Exception:
+        log.exception("simulator catch-up failed")
+    finally:
+        sim["lock"].release()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     store = get_store()
-    store.setup()
+    if settings.setup_on_start:
+        store.setup()
     weather.refresh()  # real KL weather before the simulator runs
     fleet = Fleet()
     fleet.policies = control.policies  # simulated rooms obey approved AC changes
@@ -113,10 +141,13 @@ async def lifespan(app: FastAPI):
             log.info("Back-filling %d simulated readings for hours the service was down", len(gap))
             store.insert_readings(gap)
     stop = threading.Event()
-    if settings.live_simulator:
+    if settings.live_simulator and settings.sim_mode == "request":
+        sim["fleet"] = fleet
+    elif settings.live_simulator:
         threading.Thread(target=_live_loop, args=(fleet, stop), daemon=True).start()
     yield
     stop.set()
+    sim["fleet"] = None
 
 
 app = FastAPI(title="CampusPulse", version=__version__, lifespan=lifespan)
@@ -165,16 +196,23 @@ class Reading(BaseModel):
         }
 
 
-def _accept(rows: list[dict]) -> int:
-    if settings.pubsub_topic:
-        from google.cloud import pubsub_v1
+_publisher = {}
 
-        pub = pubsub_v1.PublisherClient()
-        for r in rows:
-            pub.publish(settings.pubsub_topic, json.dumps(r, default=str).encode()).result(timeout=10)
-        n = len(rows)
-    else:
-        n = get_store().insert_readings(rows)
+
+def _publish(rows: list[dict]) -> int:
+    """Send readings through Pub/Sub; the push subscription delivers them to /api/pubsub/push."""
+    from google.cloud import pubsub_v1
+
+    pub = _publisher.get("client") or _publisher.setdefault("client", pubsub_v1.PublisherClient())
+    futures = [pub.publish(settings.pubsub_topic, json.dumps(r, default=str).encode()) for r in rows]
+    for f in futures:
+        f.result(timeout=10)
+    return len(futures)
+
+
+def _accept(rows: list[dict]) -> int:
+    n = _publish(rows) if settings.pubsub_topic else get_store().insert_readings(rows)
+    cache.drop("overview")
     now = datetime.now(timezone.utc)
     state["last_real"] = now
     state["real_count"] += n
@@ -199,12 +237,24 @@ async def ingest(request: Request, x_device_key: str = Header(default="")):
 
 
 @app.post("/api/pubsub/push")
-async def pubsub_push(request: Request):
-    """Pub/Sub push subscription target: decode and store."""
+async def pubsub_push(request: Request, key: str = ""):
+    """Pub/Sub push subscription target: decode and store.
+
+    The subscription's push endpoint carries the ingest key (?key=...), so only our own
+    subscription can write here."""
+    if not hmac.compare_digest(key, settings.ingest_key):
+        raise HTTPException(401, "missing or wrong key")
     envelope = await request.json()
-    data = json.loads(base64.b64decode(envelope["message"]["data"]))
-    get_store().insert_readings([data])
-    return {"stored": 1}
+    try:
+        data = json.loads(base64.b64decode(envelope["message"]["data"]))
+    except (KeyError, ValueError, TypeError) as e:
+        # Acknowledge malformed messages so Pub/Sub does not redeliver them forever.
+        log.warning("dropping malformed Pub/Sub message: %s", e)
+        return {"stored": 0}
+    rows = data if isinstance(data, list) else [data]
+    get_store().insert_readings(rows)
+    cache.drop("overview")
+    return {"stored": len(rows)}
 
 
 # --- read API -------------------------------------------------------------------
@@ -233,8 +283,10 @@ def _sync_control():
 
 @app.get("/api/overview")
 def overview(at: str | None = None):
-    """KPIs and room states. `at` (local time, e.g. 2026-11-04T10:00) replays the floor plan as it was then."""
-    store = get_store()
+    """KPIs and room states. `at` (local time, e.g. 2026-11-04T10:00) replays the floor plan as it was then.
+
+    Cached briefly and shared by every viewer (dropped whenever new readings or decisions arrive),
+    so an open dashboard costs a few warehouse queries a minute, not a few per viewer."""
     replay = None
     if at:
         try:
@@ -243,6 +295,13 @@ def overview(at: str | None = None):
             raise HTTPException(422, "at must be a local date-time like 2026-11-04T10:00")
         if replay.tzinfo is not None:
             replay = replay.tz_convert(settings.timezone).tz_localize(None)
+        replay = replay.floor("min")
+    key = f"overview:{replay.isoformat() if replay is not None else 'live'}"
+    return cache.get(key, 600 if replay is not None else 20, lambda: _overview(replay))
+
+
+def _overview(replay: pd.Timestamp | None) -> dict:
+    store = get_store()
     rooms = [r | {"ac_mode": control.mode(r["room_id"])} for r in analytics.room_states(store, at=replay)]
     moment = replay.to_pydatetime() if replay is not None else datetime.now(settings.timezone).replace(tzinfo=None)
     return {
@@ -295,6 +354,7 @@ def decide(action_id: str, body: Decision):
         "rm_per_week": act["rm_per_week"], "decided_by": body.decided_by,
     })
     commands = control.apply(act, body.status, body.decided_by)
+    cache.drop("overview")  # rooms show their new AC mode straight away
     return {"ok": True, "action_id": action_id, "status": body.status, "commands": commands}
 
 
@@ -420,7 +480,8 @@ def decision_log():
 
 def _decision_status() -> dict[str, str]:
     """Latest decision per action id."""
-    df = get_store().query("""SELECT action_id, status FROM decisions
+    # BigQuery accepts QUALIFY only alongside WHERE, GROUP BY or HAVING, hence WHERE TRUE.
+    df = get_store().query("""SELECT action_id, status FROM decisions WHERE TRUE
         QUALIFY ROW_NUMBER() OVER (PARTITION BY action_id ORDER BY decided_at DESC) = 1""")
     return dict(zip(df["action_id"], df["status"]))
 
@@ -446,7 +507,7 @@ def estates_report():
 def room(room_id: str):
     if room_id not in ROOM_BY_ID:
         raise HTTPException(404, "unknown room")
-    return analytics.room_detail(get_store(), room_id)
+    return cache.get(f"room:{room_id}", 120, lambda: analytics.room_detail(get_store(), room_id))
 
 
 @app.get("/api/network")
@@ -477,6 +538,16 @@ def ask_suggestions():
 
 
 # --- web app --------------------------------------------------------------------
+
+@app.middleware("http")
+async def catch_up_simulation(request: Request, call_next):
+    """Request mode (Cloud Run free tier): bring simulated readings up to now before answering."""
+    path = request.url.path
+    if (settings.sim_mode == "request" and path.startswith("/api/")
+            and not path.startswith(("/api/ingest", "/api/pubsub"))):
+        await run_in_threadpool(_catch_up)
+    return await call_next(request)
+
 
 @app.middleware("http")
 async def revalidate_web_app(request: Request, call_next):

@@ -12,3 +12,5 @@ firmware/**/secrets.h
 
 # YOLO weights download on first run of the edge camera
 *.pt
+.deploy.env
+.claude/

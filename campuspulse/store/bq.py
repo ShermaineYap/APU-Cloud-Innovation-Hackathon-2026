@@ -1,7 +1,9 @@
 """Cloud backend: Google BigQuery."""
 from __future__ import annotations
 
+import math
 import re
+from datetime import datetime, timezone
 
 import pandas as pd
 from google.cloud import bigquery
@@ -13,7 +15,28 @@ TABLES = ("readings", "rooms", "timetable", "decisions", "v_room_hourly", "v_emp
           "v_network_daily", "v_slot_attendance", "occupancy_forecast", "energy_model")
 
 
+INT_COLUMNS = ("weekday", "hour_local", "people", "packets_sent", "packets_acked")
+
+
+def _json_row(r: dict) -> dict:
+    """A reading as JSON BigQuery accepts: ISO times, real ints, null instead of NaN."""
+    out = {}
+    for k, v in r.items():
+        if v is None or (isinstance(v, float) and math.isnan(v)):
+            out[k] = None
+        elif isinstance(v, datetime):
+            out[k] = v.isoformat()
+        elif k in INT_COLUMNS:
+            out[k] = int(round(float(v)))
+        elif hasattr(v, "item"):  # numpy scalar
+            out[k] = v.item()
+        else:
+            out[k] = v
+    return out
+
+
 class BigQueryStore(Store):
+    supports_ml = True  # BigQuery ML models (bigquery/ml.sql) can be queried
     def __init__(self):
         self.client = bigquery.Client(project=settings.gcp_project, location=settings.bq_location)
         self.ds = f"{self.client.project}.{settings.bq_dataset}"
@@ -43,20 +66,25 @@ class BigQueryStore(Store):
     def insert_readings(self, rows: list[dict]) -> int:
         if not rows:
             return 0
-        df = pd.DataFrame([enrich(r) for r in rows])
-        if len(df) > 500:  # history backfill: one load job instead of streaming
-            cfg = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
+        recs = [enrich(r) for r in rows]
+        if len(recs) > 500:  # history back-fill: one free load job instead of streaming
+            df = pd.DataFrame(recs)
+            for c in INT_COLUMNS:  # nullable ints: a camera row has no CO2, a sensor row may have no head count
+                df[c] = pd.to_numeric(df[c], errors="coerce").round().astype("Int64")
+            cfg = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND",
+                                         schema=self.client.get_table(f"{self.ds}.readings").schema)
             self.client.load_table_from_dataframe(df, f"{self.ds}.readings", job_config=cfg).result()
             return len(df)
-        payload = []
-        for r in df.to_dict("records"):
-            r["ts"] = r["ts"].isoformat()
-            r["ts_local"] = r["ts_local"].isoformat()
-            payload.append(r)
-        errors = self.client.insert_rows_json(f"{self.ds}.readings", payload)
+        errors = self.client.insert_rows_json(f"{self.ds}.readings", [_json_row(r) for r in recs])
         if errors:
             raise RuntimeError(f"BigQuery insert failed: {errors[:3]}")
-        return len(payload)
+        return len(recs)
+
+    def latest_ts_sql(self) -> str:
+        # Readings are produced up to the current minute (live loop or request catch-up), so "now"
+        # stands in for MAX(ts). A constant lets BigQuery prune the readings partitions.
+        now = datetime.now(timezone.utc)
+        return f"TIMESTAMP '{now:%Y-%m-%d %H:%M:%S}+00'"
 
     def query(self, sql: str) -> pd.DataFrame:
         job_cfg = bigquery.QueryJobConfig(maximum_bytes_billed=2 * 1024**3)

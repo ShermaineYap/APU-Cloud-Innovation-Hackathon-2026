@@ -1,11 +1,15 @@
 .git
 .github
-data
+.claude
+/data
 *.duckdb*
 __pycache__
 .pytest_cache
 firmware
 tests
 docs
+edge
 .venv
 .env
+.deploy.env
+*.pt

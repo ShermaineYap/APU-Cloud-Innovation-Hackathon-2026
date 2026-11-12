@@ -184,6 +184,26 @@ class Fleet:
         self.last_ts = ts - STEP
         return rows
 
+    def catch_up(self, now: datetime, min_gap_s: float = 30.0, max_steps: int = 12 * 24) -> list[dict]:
+        """Rows from the last reading up to `now`, in 5-minute steps.
+
+        Used on Cloud Run's request-based billing, where the instance has no CPU
+        between requests: the readings a background loop would have written are
+        produced on the next request instead. Returns [] if less than `min_gap_s`
+        has passed. Longer gaps than `max_steps` steps are left to the start-up back-fill.
+        """
+        last = getattr(self, "last_ts", None)
+        if last is None or (now - last).total_seconds() < min_gap_s:
+            return []
+        rows: list[dict] = []
+        t, steps = last + STEP, 0
+        while t < now and steps < max_steps:
+            rows.extend(self.tick(t))
+            t += STEP
+            steps += 1
+        rows.extend(self.tick(now))
+        return rows
+
     def tick(self, now: datetime) -> list[dict]:
         """Rows for the live stream, one per room, at wall-clock time."""
         dt_h = max(1 / 120, (now - getattr(self, "last_ts", now - STEP)).total_seconds() / 3600)

@@ -312,7 +312,8 @@ async function openRoom(id) {
       <div class="chart"><h3>CO₂ peak per hour (limit ${mode.co2_limit_ppm} ppm)</h3><canvas id="c-co2" role="img" aria-label="CO2 per hour"></canvas></div>
       <div class="chart"><h3>Energy per hour</h3><canvas id="c-kwh" role="img" aria-label="Energy per hour"></canvas>
         <p class="hint">Blue: AC on with the room empty. Teal: AC on with people in. Grey: AC off.</p></div>
-      ${d.anomalies.length ? `<div class="chart"><h3>Unusual energy hours (last 4 weeks)</h3>${rowsTable(d.anomalies)}</div>` : ""}`;
+      ${d.anomalies.length ? `<div class="chart"><h3>Unusual energy hours (last 4 weeks)</h3>${rowsTable(d.anomalies)}
+        <p class="hint">Detected by ${esc(d.anomaly_method || "")}.</p></div>` : ""}`;
     drawRoomCharts(d, room);
   } catch (e) {
     $("#drawer-body").innerHTML += `<p>Could not load this room: ${esc(e.message)}</p>`;
@@ -786,5 +787,9 @@ restoreDecisions().then(() => loadBrief()).catch((e) => { $("#headline").textCon
 loadSuggestions().catch(() => {});
 loadCommands().catch(() => {});
 loadNetwork().catch(() => {});
-setInterval(() => loadOverview().catch(() => {}), 30000);
-setInterval(() => loadNetwork().catch(() => {}), 60000);
+// Poll only while the tab is visible: a forgotten tab should not keep querying the warehouse.
+setInterval(() => { if (!document.hidden) loadOverview().catch(() => {}); }, 30000);
+setInterval(() => { if (!document.hidden) loadNetwork().catch(() => {}); }, 60000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) { loadOverview().catch(() => {}); loadNetwork().catch(() => {}); }
+});

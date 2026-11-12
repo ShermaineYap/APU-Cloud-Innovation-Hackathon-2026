@@ -9,7 +9,7 @@ OPTIONS (
   time_series_data_col = 'avg_people',
   time_series_id_col = 'room_id',
   data_frequency = 'HOURLY',
-  holiday_region = 'MY',
+  horizon = 720,              -- 30 days: one training serves the app's 24-hour forecasts for a month
   auto_arima = TRUE
 ) AS
 SELECT room_id, CAST(hour AS TIMESTAMP) AS hour, COALESCE(avg_people, 0) AS avg_people
@@ -26,9 +26,11 @@ OPTIONS (
   decompose_time_series = TRUE
 ) AS
 SELECT room_id, CAST(hour AS TIMESTAMP) AS hour, kwh
-FROM {ds}v_room_hourly;
+FROM {ds}v_room_hourly
+WHERE kwh IS NOT NULL;
 
 -- Example reads the app issues:
--- SELECT * FROM ML.FORECAST(MODEL {ds}occupancy_forecast, STRUCT(24 AS horizon, 0.9 AS confidence_level));
+-- `hour` is the local wall-clock hour stored as a TIMESTAMP; DATETIME(forecast_timestamp) gives it back.
+-- SELECT * FROM ML.FORECAST(MODEL {ds}occupancy_forecast, STRUCT(720 AS horizon, 0.8 AS confidence_level));
 -- SELECT * FROM ML.DETECT_ANOMALIES(MODEL {ds}energy_model, STRUCT(0.99 AS anomaly_prob_threshold))
 --   WHERE is_anomaly;
