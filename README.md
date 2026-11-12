@@ -7,8 +7,8 @@ APU Cloud Innovation Hackathon 2026 · Track 3: Data-Driven Research & Intellige
 | | |
 | --- | --- |
 | Live demo | https://campuspulse-443933554054.asia-southeast1.run.app (Cloud Run, asia-southeast1; first load after idle takes about 10 s) |
-| 3-minute video | _added after recording_ |
-| Pitch deck | `deck/CampusPulse.pdf` (added before submission) |
+| Demo video | Submitted with the entry (2:45) |
+| Pitch deck | Submitted as a PDF with the entry |
 | Virtual sensor node | [Wokwi ESP32 project](https://wokwi.com/projects/480507881128421377): press ▶, no hardware needed |
 
 ![CampusPulse Today screen: the morning brief, four key figures and the floor plan replayed at Wednesday 14:00](docs/dashboard.png)
@@ -189,6 +189,6 @@ python -m pytest -q
 
 ## Team
 
-Shermaine Yap Shi Min, Asia Pacific University of Technology & Innovation.
+Team **What's Google?**: Shermaine Yap Shi Min, Asia Pacific University of Technology & Innovation.
 
 MIT licensed.
