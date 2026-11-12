@@ -2,7 +2,8 @@
 fastapi==0.162.2
 uvicorn[standard]==0.54.0
 pandas==2.3.3
-numpy==2.5.4
+numpy==2.5.4; python_version >= "3.12"
+numpy==2.4.6; python_version < "3.12"
 duckdb==2.0.0
 sqlglot==30.30.0
 google-genai==3.0.0
@@ -13,4 +14,5 @@ pyarrow==26.0.1
 paho-mqtt==2.2.0
 httpx==0.28.1
 reportlab==5.1.0
-scipy==1.18.1
+scipy==1.18.1; python_version >= "3.12"
+scipy==1.17.1; python_version < "3.12"
