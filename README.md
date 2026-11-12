@@ -189,6 +189,6 @@ python -m pytest -q
 
 ## Team
 
-Team **What's Google?**: Shermaine Yap Shi Min, Asia Pacific University of Technology & Innovation.
+Team **What's Google?**: Shermaine Yap Shi Min and Lee Yong Han, Asia Pacific University of Technology & Innovation.
 
 MIT licensed.
