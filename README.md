@@ -11,17 +11,19 @@ APU Cloud Innovation Hackathon 2026 · Track 3: Data-Driven Research & Intellige
 | Pitch deck | `deck/CampusPulse.pdf` (added before submission) |
 | Virtual sensor node | [Wokwi ESP32 project](https://wokwi.com/projects/480507881128421377): press ▶, no hardware needed |
 
-![CampusPulse dashboard](docs/dashboard.png)
+![CampusPulse Today screen: the morning brief, four key figures and the floor plan replayed at Wednesday 14:00](docs/dashboard.png)
 
 ## The problem
 
 University rooms are cooled on a fixed building schedule, not by who is in them. Classes get booked into rooms three times too big, some tutorials squeeze more students than seats into a small room, and nobody has the evidence to change the timetable or the AC with confidence. When the data does exist, nobody knows whether the sensor behind it is reliable.
 
-CampusPulse runs on **APU's real teaching week**: 20 real rooms (Auditoriums 1–6, Block B classrooms, Tech Labs) and their actual classes, taken from APU's public timetable feed. In the demo, **empty rooms take about 43% of the week's cooling energy**, and dozens of classes with one or two intakes are booked into 120–200-seat auditoriums.
+CampusPulse runs on **APU's real teaching week**: 20 real rooms (Auditoriums 1–6, Block B classrooms, Tech Labs) and their actual classes, taken from APU's public timetable feed. In the demo, **empty rooms take about 41% of the week's cooling energy**, and dozens of classes with one or two intakes are booked into 120–200-seat auditoriums.
 
 ## Autopilot: the system makes the decision
 
 Press **Plan tomorrow** and CampusPulse decides, instead of listing tips:
+
+![Autopilot screen: the plan saves 564 kWh (42%) on Monday, with where the saving comes from and room changes marked automatic or needing approval](docs/autopilot.png)
 
 1. **Predict** each class's head count from the sensors (same class, past weeks) and the hourly outdoor temperature from the **real Kuala Lumpur forecast** (Open-Meteo).
 2. **Optimise** which room every class uses with a mixed-integer program (SciPy / HiGHS): least cooling energy, every class fits with spare seats, no double booking, labs stay labs, a cost for every move.
