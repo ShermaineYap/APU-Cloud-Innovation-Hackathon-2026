@@ -22,7 +22,8 @@ Three terminals in the project folder:
 .venv/Scripts/python edge/people_counter.py --room B-08-05 --server http://localhost:8000 --show
 ```
 
-Then open <http://localhost:8000> and start the Wokwi project (see [firmware/wokwi/README.md](../firmware/wokwi/README.md)).
+Then open <http://localhost:8000> and the Wokwi project <https://wokwi.com/projects/480507881128421377>,
+press ▶ and keep that tab in front (details: [firmware/wokwi/README.md](../firmware/wokwi/README.md)).
 No Wokwi? Run `.venv/Scripts/python edge/virtual_node.py --people 30` instead.
 
 Checklist: header shows **KL xx°C** (real weather), B-08-05 shows **live** or **camera count**, footer says **Gemini**.

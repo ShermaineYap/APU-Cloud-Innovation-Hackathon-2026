@@ -17,7 +17,12 @@ Wokwi ESP32 ──MQTT──► broker.hivemq.com ──► mqtt_bridge ──�
 | Blue LED | GPIO26 | the AC relay: lit = AC allowed to run |
 | Green LED | GPIO2 | MQTT connected |
 
-## Set up (5 minutes)
+## Open the ready-made project
+
+**<https://wokwi.com/projects/480507881128421377>**: everything below is already done there (sketch, wiring,
+libraries). Open it and press ▶. To change it, sign in and use *Save a copy*.
+
+## Or build it yourself (5 minutes)
 
 1. Go to <https://wokwi.com/projects/new/esp32> (sign in to save the project).
 2. Replace `sketch.ino` with [`sketch.ino`](sketch.ino).

@@ -9,6 +9,7 @@ APU Cloud Innovation Hackathon 2026 · Track 3: Data-Driven Research & Intellige
 | Live demo | _added after deployment_ |
 | 3-minute video | _added after recording_ |
 | Pitch deck | `deck/CampusPulse.pdf` (added before submission) |
+| Virtual sensor node | [Wokwi ESP32 project](https://wokwi.com/projects/480507881128421377): press ▶, no hardware needed |
 
 ![CampusPulse dashboard](docs/dashboard.png)
 
@@ -48,7 +49,7 @@ On the demo data a typical teaching day saves about **40% of cooling energy** an
 10. **Carbon, not just ringgit.** Every saving is also shown in kg CO₂e (grid factor `CP_GRID_KG_CO2E_PER_KWH`, default 0.758 for Peninsular Malaysia), in the brief, the actions, What if and the Estates report.
 11. **Where can I study?** A student view of free rooms with no class booked for the next 30 minutes, ranked so rooms *already being cooled* come first: students fill cooling the campus is paying for anyway.
 13. **Real weather.** The simulator, the planner and the header use the real hourly temperature at APU from Open-Meteo (free, no key; cached, with a typical-day fallback offline). Cooling load rises on hot afternoons.
-14. **A virtual sensor node, no hardware needed.** `firmware/wokwi/` runs the node on the free Wokwi ESP32 simulator: DHT22, PIR, a CO₂ knob and an AC-relay LED, over real MQTT through a public broker, receiving the AC commands back. `edge/virtual_node.py` does the same from a terminal. See [docs/DEMO.md](docs/DEMO.md).
+14. **A virtual sensor node, no hardware needed.** [Open it on Wokwi](https://wokwi.com/projects/480507881128421377) (source in `firmware/wokwi/`): the node runs on the free Wokwi ESP32 simulator: DHT22, PIR, a CO₂ knob and an AC-relay LED, over real MQTT through a public broker, receiving the AC commands back. `edge/virtual_node.py` does the same from a terminal. See [docs/DEMO.md](docs/DEMO.md).
 12. **Demo clock.** Replay any hour of the last 7 days (day picker, time slider, ▶ Play the day), or open `/?at=2026-11-11T14:00`. Hours when the service was down are back-filled on start, so replay never hits a hole.
 
 ## Cloud, IoT and network, converged
