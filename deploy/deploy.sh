@@ -22,6 +22,7 @@ TOPIC="campuspulse-telemetry"
 SA="campuspulse-run@${PROJECT_ID}.iam.gserviceaccount.com"
 
 cd "$(dirname "$0")/.."
+PY="${PYTHON:-$(command -v python3 || command -v python)}"
 
 # The ingest key is kept in .deploy.env (git-ignored) so redeploys keep working with flashed devices.
 touch .deploy.env
@@ -32,7 +33,7 @@ grep -q '^INGEST_KEY=' .deploy.env || echo "INGEST_KEY=$INGEST_KEY" >> .deploy.e
 
 # Gemini key: environment first, then .env.
 if [[ -z "${GEMINI_API_KEY:-}" && -f .env ]]; then
-  GEMINI_API_KEY="$(grep -E '^GEMINI_API_KEY=' .env | tail -1 | cut -d= -f2- | tr -d '"'"'"' ')"
+  GEMINI_API_KEY="$( (grep -E '^GEMINI_API_KEY=' .env || true) | tail -1 | cut -d= -f2- | tr -d '"'"'"' ')"
 fi
 GEMINI_MODEL="${CP_GEMINI_MODEL:-gemini-3.5-flash-lite}"
 
@@ -45,7 +46,7 @@ if [[ "$(echo "$BILLING" | tr "[:upper:]" "[:lower:]")" == "false" ]]; then
 fi
 
 echo "1/6 Enabling APIs"
-APIS="run.googleapis.com bigquery.googleapis.com pubsub.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com"
+APIS="run.googleapis.com bigquery.googleapis.com pubsub.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com iam.googleapis.com"
 [[ -z "${GEMINI_API_KEY:-}" ]] && APIS="$APIS aiplatform.googleapis.com"
 # shellcheck disable=SC2086
 gcloud services enable $APIS
@@ -54,13 +55,23 @@ echo "2/6 Service account"
 gcloud iam service-accounts describe "$SA" >/dev/null 2>&1 || \
   gcloud iam service-accounts create campuspulse-run --display-name "CampusPulse Cloud Run"
 for role in roles/bigquery.dataEditor roles/bigquery.jobUser roles/pubsub.publisher roles/aiplatform.user; do
-  gcloud projects add-iam-policy-binding "$PROJECT_ID" --member "serviceAccount:$SA" --role "$role" \
-    --condition=None --quiet >/dev/null
+  # A new service account can take a minute before IAM accepts it, so retry.
+  for i in 1 2 3 4 5 6 7 8; do
+    gcloud projects add-iam-policy-binding "$PROJECT_ID" --member "serviceAccount:$SA" --role "$role" \
+      --condition=None --quiet >/dev/null 2>&1 && break
+    if [[ $i == 8 ]]; then echo "Could not grant $role to $SA"; exit 1; fi
+    echo "   waiting for the new service account ($role)..."; sleep 10
+  done
 done
+# Source deploys build as the default compute service account; make sure it may build (harmless if it already can).
+PN="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+gcloud projects add-iam-policy-binding "$PROJECT_ID" --member "serviceAccount:${PN}-compute@developer.gserviceaccount.com" \
+  --role roles/run.builder --condition=None --quiet >/dev/null 2>&1 || true
 
 echo "3/6 BigQuery: dataset, tables, views, 28 days of history, BigQuery ML models (a few minutes)"
+gcloud auth application-default print-access-token >/dev/null 2>&1 || gcloud auth application-default login
 export GOOGLE_CLOUD_PROJECT="$PROJECT_ID" CP_BACKEND=bigquery CP_BQ_DATASET="$DATASET" CP_BQ_LOCATION="$REGION"
-if [[ -n "${SKIP_ML:-}" ]]; then python scripts/bq_setup.py --seed; else python scripts/bq_setup.py --seed --ml; fi
+if [[ -n "${SKIP_ML:-}" ]]; then "$PY" scripts/bq_setup.py --seed; else "$PY" scripts/bq_setup.py --seed --ml; fi
 
 echo "4/6 Pub/Sub topic"
 gcloud pubsub topics describe "$TOPIC" >/dev/null 2>&1 || gcloud pubsub topics create "$TOPIC"
@@ -98,4 +109,4 @@ grep -q '^URL=' .deploy.env && sed -i.bak "s#^URL=.*#URL=$URL#" .deploy.env && r
 echo
 echo "Deployed: $URL"
 echo "Ingest key for devices and the camera (kept in .deploy.env): $INGEST_KEY"
-echo "Check everything: python scripts/cloud_check.py"
+echo "Check everything: $PY scripts/cloud_check.py"

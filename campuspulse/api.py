@@ -106,7 +106,10 @@ def _catch_up() -> None:
     if fleet is None or not sim["lock"].acquire(blocking=False):
         return  # not started, or another request is already catching up
     try:
-        _sync_control()
+        try:
+            _sync_control()
+        except Exception:  # AC modes can catch up later; readings must not wait for them
+            log.exception("control sync failed")
         _store_simulated(fleet.catch_up(datetime.now(timezone.utc)))
     except Exception:
         log.exception("simulator catch-up failed")
