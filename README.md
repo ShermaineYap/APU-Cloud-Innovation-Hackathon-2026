@@ -6,7 +6,7 @@ APU Cloud Innovation Hackathon 2026 · Track 3: Data-Driven Research & Intellige
 
 | | |
 | --- | --- |
-| Live demo | _added after deployment_ |
+| Live demo | https://campuspulse-443933554054.asia-southeast1.run.app (Cloud Run, asia-southeast1; first load after idle takes about 10 s) |
 | 3-minute video | _added after recording_ |
 | Pitch deck | `deck/CampusPulse.pdf` (added before submission) |
 | Virtual sensor node | [Wokwi ESP32 project](https://wokwi.com/projects/480507881128421377): press ▶, no hardware needed |
