@@ -6,7 +6,7 @@
     { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": 0, "attrs": {} },
     { "type": "wokwi-dht22", "id": "dht", "top": -105, "left": 180, "attrs": { "temperature": "26.5", "humidity": "62" } },
     { "type": "wokwi-pir-motion-sensor", "id": "pir", "top": -110, "left": -150, "attrs": {} },
-    { "type": "wokwi-potentiometer", "id": "co2", "top": 170, "left": -170, "attrs": { "value": "1000" } },
+    { "type": "wokwi-potentiometer", "id": "co2", "top": 170, "left": -170, "attrs": { "value": "300" } },
     { "type": "wokwi-led", "id": "ac", "top": 60, "left": 230, "attrs": { "color": "blue", "label": "AC relay" } },
     { "type": "wokwi-resistor", "id": "r1", "top": 140, "left": 200, "rotate": 90, "attrs": { "value": "220" } },
     { "type": "wokwi-led", "id": "link", "top": 60, "left": 300, "attrs": { "color": "green", "label": "MQTT" } },

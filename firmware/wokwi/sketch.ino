@@ -70,7 +70,7 @@ void connectMqtt() {
     Serial.print("MQTT ... ");
     if (mqtt.connect(id.c_str())) {
       Serial.println("connected");
-      mqtt.subscribe(commandTopic, 1);
+      mqtt.subscribe(commandTopic);  // QoS 0: the command is retained, so it comes back on every reconnect
     } else {
       Serial.printf("failed (%d), retrying\n", mqtt.state());
       delay(1500);
@@ -95,6 +95,9 @@ void setup() {
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setCallback(onCommand);
   mqtt.setBufferSize(512);
+  // Generous keepalive: a simulator tab that slows down (or a busy campus Wi-Fi) must not drop the link.
+  mqtt.setKeepAlive(90);
+  mqtt.setSocketTimeout(30);
 }
 
 void loop() {

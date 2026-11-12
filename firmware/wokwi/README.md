@@ -41,6 +41,10 @@ Terminal 2, the bridge:
 .venv/Scripts/python -m campuspulse.mqtt_bridge --broker broker.hivemq.com --prefix apu-campuspulse-2026 --api http://localhost:8000
 ```
 
+Keep the Wokwi tab **visible in front** while it runs: browsers throttle background tabs, and the
+speed meter (top right of the simulation, next to the clock) should read close to 100%. At a few percent the
+simulated board is too slow for MQTT and keeps reconnecting.
+
 Then press the green ▶ in Wokwi. The serial monitor shows `Wi-Fi ok` and `MQTT ... connected`, and
 B-08-05 on the dashboard turns **live** within about 30 seconds.
 
