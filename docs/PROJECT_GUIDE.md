@@ -96,7 +96,7 @@ edge/                   YOLO people counter (camera node, optional)
 firmware/               ESP32 sketch (MQTT QoS 1 or HTTPS)
 scripts/                BigQuery setup, Gemini check, timetable import
 deploy/                 Cloud Run deploy script
-tests/                  29 tests
+tests/                  41 tests
 docs/                   architecture diagram, dashboard screenshot, this guide
 ```
 
@@ -111,10 +111,10 @@ Reads every setting once at start-up.
 | --- | --- |
 | `_load_dotenv(path)` | Loads `KEY=value` lines from `.env` into the environment. Variables already set in the shell win, so Cloud Run and CI are unaffected. |
 | `_bool(name, default)` | Reads a true/false environment variable. |
-| `Settings` | All settings in one place: backend (`local` or `bigquery`), DuckDB path, Google Cloud project, BigQuery dataset and region, Pub/Sub topic, Gemini key / Vertex mode / model, ingest key, live simulator on/off, history days, tariff, CO₂ limit, time zone. |
+| `Settings` | All settings in one place: backend (`local` or `bigquery`), DuckDB path, Google Cloud project, BigQuery dataset and region, Pub/Sub topic, Gemini key / Vertex mode / model, ingest key, live simulator on/off and mode (`thread` or `request`), setup on start, history days, tariff, carbon factor, CO₂ limit, time zone. |
 | `Settings.gemini_enabled` | True when an API key is set, or Vertex AI is on with a project. |
 
-Main environment variables: `GEMINI_API_KEY`, `CP_GEMINI_MODEL` (default `gemini-3.5-flash-lite`), `CP_BACKEND`, `GOOGLE_CLOUD_PROJECT`, `CP_INGEST_KEY`, `CP_TARIFF_RM_PER_KWH`, `CP_LIVE_ROOM`.
+Main environment variables: `GEMINI_API_KEY`, `CP_GEMINI_MODEL` (default `gemini-3.5-flash-lite`), `CP_BACKEND`, `GOOGLE_CLOUD_PROJECT`, `CP_INGEST_KEY`, `CP_TARIFF_RM_PER_KWH`, `CP_LIVE_ROOM`, `CP_SIM_MODE` (`request` on Cloud Run), `CP_SETUP_ON_START` (`false` on Cloud Run), `CP_PUBSUB_TOPIC`.
 
 ### `campuspulse/campus.py`: the real campus
 | Function / class | What it does |
@@ -164,7 +164,9 @@ Constants: `LIVE_ROOM` (default `B-08-05`), `STUDENTS_PER_INTAKE` (12), `BLOCK_N
 | `kpis(store)` | Last 7 days: kWh and ringgit spent cooling empty rooms, share of all cooling, stale-air hours, average seat use, fleet confidence. |
 | `seasonal_forecast(hist)` | Next 24 hours from the same hour-of-week in past weeks, with a 10th–90th percentile band (the local stand-in for ARIMA_PLUS). |
 | `detect_anomalies(hist)` | Unusual energy hours by robust z-score against the same hour-of-week. |
-| `room_detail(store, room_id)` | Everything for the room drawer: 48-hour history, forecast, anomalies. |
+| `bqml_forecast(store, room_id, after)` | Cloud mode: the next 24 hours from BigQuery ML (`ML.FORECAST` on `occupancy_forecast`, 80% interval). Returns None if the model is missing or its 30-day horizon has run out. |
+| `bqml_anomalies(store, room_id)` | Cloud mode: unusual energy hours from `ML.DETECT_ANOMALIES` on `energy_model`. |
+| `room_detail(store, room_id)` | Everything for the room drawer: 48-hour history, forecast and anomalies (BigQuery ML when trained, otherwise the local baseline), with `forecast_method` and `anomaly_method` saying which was used. |
 
 ### `campuspulse/network.py`: can we trust the data?
 | Function | What it does |
@@ -208,7 +210,7 @@ Constants: `LIVE_ROOM` (default `B-08-05`), `STUDENTS_PER_INTAKE` (12), `BLOCK_N
 | Endpoint | Function | What it does |
 | --- | --- | --- |
 | `POST /api/ingest` | `ingest` | Readings from sensor or camera nodes. Checks `X-Device-Key` first, then validates. Cameras may send people only; sensors must send CO₂, temperature and signal. |
-| `POST /api/pubsub/push` | `pubsub_push` | Pub/Sub push target in the cloud. |
+| `POST /api/pubsub/push` | `pubsub_push` | Pub/Sub push target in the cloud; the subscription's URL carries the ingest key (`?key=`). |
 | `GET /api/health` | `health` | Version and mode (backend, Gemini, live node). |
 | `GET /api/overview` | `overview` | KPIs and every room's current state. |
 | `GET /api/actions` | `actions` | Ranked actions (cached 60 s). |
@@ -223,7 +225,7 @@ Constants: `LIVE_ROOM` (default `B-08-05`), `STUDENTS_PER_INTAKE` (12), `BLOCK_N
 | `GET /api/suggestions` | `ask_suggestions` | Suggested questions. |
 | `GET /` | `index` | The dashboard. |
 
-Internals: `Reading.to_row` validates and normalises a reading; `_accept` stores it (or publishes to Pub/Sub) and remembers which rooms have live hardware; `_live_loop` adds simulated readings every 30 s, skipping rooms where real hardware is reporting; `lifespan` sets up the store, clears stale data and seeds 28 days of history on first start; `Cache` keeps expensive results for a short time.
+Internals: `Reading.to_row` validates and normalises a reading; `_accept` stores it (or publishes to Pub/Sub) and remembers which rooms have live hardware; `_live_loop` adds simulated readings every 30 s (`thread` mode), or `_catch_up` produces them on the next request (`request` mode, for Cloud Run's free tier), skipping rooms where real hardware is reporting; `lifespan` sets up the store, clears stale data and seeds 28 days of history on first start; `Cache` keeps expensive results for a short time.
 
 ### `campuspulse/autopilot.py`: plan the next teaching day
 | Function / class | What it does |
@@ -288,19 +290,22 @@ Privacy: frames are never saved or sent; only `{room, people}` leaves the device
 | Script | What it does |
 | --- | --- |
 | `import_apu_timetable.py` | Downloads APU's public timetable feed and keeps room, day, times, module and intakes for one week (`--week YYYY-MM-DD`). Lecturer data is dropped. |
+| `cloud_check.py` | After a deploy: runs every query the app makes against BigQuery (including BigQuery ML), then calls the live service (Gemini brief, captions, Ask, room drawer, PDF, ingest) and prints PASS/FAIL. |
 | `check_gemini.py` | Tests the Gemini key and model from `.env` without printing the key; lists available models if something fails. |
 | `bq_setup.py` | Creates the BigQuery dataset, loads history (`--seed`) and trains BigQuery ML (`--ml`). |
 
 ### `deploy/deploy.sh`
-Enables the Google Cloud APIs, creates a service account, builds BigQuery, and deploys to Cloud Run with Gemini on Vertex AI: `PROJECT_ID=your-project ./deploy/deploy.sh`.
+`PROJECT_ID=your-project ./deploy/deploy.sh` enables the APIs, creates a service account, builds BigQuery (tables, views, 28 days of history), trains the BigQuery ML models, creates the Pub/Sub topic and push subscription, and deploys Cloud Run sized for the free tier: scale to zero, CPU only during requests, one instance, simulated readings caught up on request. Gemini uses the AI Studio key from `.env` if present, otherwise Vertex AI. Then run `python scripts/cloud_check.py`.
 
-### `tests/` (29 tests)
+### `tests/` (41 tests)
 | File | Checks |
 | --- | --- |
 | `test_engine.py` | The engine finds every planted problem; every action carries evidence; ranking order; network flags; gateway outage; KPIs; all tested questions run; the campus uses the real APU timetable with no lecturer data. |
 | `test_api.py` | Ingest authentication and validation; real readings marked real; decisions logged; camera counts override people but keep sensor data; captions; PDF report. |
 | `test_gemini_loop.py` | The SQL agent recovers from a rejected query (fake Gemini); the brief drops invented action ids. |
 | `test_sqlguard.py` | Only safe single SELECTs pass the guard. |
+| `test_control.py` | Approving an AC change sends commands and dismissing reverts them; simulated rooms obey the modes. |
+| `test_cloud_paths.py` | BigQuery ML forecast and anomalies feed the room drawer (and fall back when the model is missing or stale); BigQuery rows are valid JSON; request-mode catch-up; Pub/Sub push needs the key; Gemini retries temporary errors. |
 
 ---
 

@@ -43,6 +43,11 @@ class Store(ABC):
 
     dialect: str = "bigquery"
 
+    def latest_ts_sql(self) -> str:
+        """SQL for 'the newest reading time'. The local store asks the table; BigQuery overrides this
+        with a constant, so time filters prune to recent partitions instead of scanning the table."""
+        return "(SELECT MAX(ts) FROM readings)"
+
     @abstractmethod
     def setup(self) -> None: ...
 

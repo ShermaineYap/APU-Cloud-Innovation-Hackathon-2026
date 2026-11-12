@@ -6,6 +6,8 @@ the same idea ARIMA_PLUS captures with its weekly seasonal component.
 """
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pandas as pd
 
@@ -13,6 +15,8 @@ from .campus import ROOM_BY_ID
 from .config import settings
 from .network import CAMERA_PREFIX, STALE_AFTER_MIN, link_health, room_confidence
 from .store import Store
+
+log = logging.getLogger(__name__)
 
 
 def _now_local(store: Store) -> pd.Timestamp:
@@ -35,7 +39,7 @@ def replay_range(store: Store) -> dict:
 def room_states(store: Store, at: pd.Timestamp | None = None) -> list[dict]:
     """Every room's state now, or as it was at a past local time (demo clock / replay)."""
     if at is None:
-        anchor, upto = "(SELECT MAX(ts) FROM readings)", ""
+        anchor, upto = store.latest_ts_sql(), ""
     else:
         anchor = _utc_literal(at)
         upto = f"AND ts <= {anchor}"
@@ -161,12 +165,65 @@ def detect_anomalies(hist: pd.DataFrame, col: str = "kwh", z: float = 3.5) -> pd
     return h[h["score"].abs() >= z]
 
 
+# BigQuery ML: models trained by bigquery/ml.sql. Their time column is the local wall-clock hour stored
+# as a TIMESTAMP, so DATETIME(forecast_timestamp) gives the local hour back.
+ML_HORIZON_H = 720  # one training covers 30 days of forecasts (must not exceed HORIZON in ml.sql)
+ML_CONFIDENCE = 0.8  # 10th to 90th percentile, the same band as the local baseline
+
+
+def bqml_forecast(store: Store, room_id: str, after: pd.Timestamp, hours: int = 24) -> pd.DataFrame | None:
+    """Next `hours` of occupancy from the ARIMA_PLUS model, or None if it is unavailable or out of date."""
+    if not getattr(store, "supports_ml", False):
+        return None
+    try:
+        df = store.query(f"""
+            SELECT DATETIME(forecast_timestamp) AS hour, forecast_value AS forecast,
+                   prediction_interval_lower_bound AS low, prediction_interval_upper_bound AS high
+            FROM ML.FORECAST(MODEL occupancy_forecast,
+                             STRUCT({ML_HORIZON_H} AS horizon, {ML_CONFIDENCE} AS confidence_level))
+            WHERE room_id = '{room_id}' AND DATETIME(forecast_timestamp) > DATETIME '{after:%Y-%m-%d %H:%M:%S}'
+            ORDER BY hour
+            LIMIT {hours}
+        """)
+    except Exception as e:  # model not trained yet, or BigQuery ML unavailable
+        log.info("BigQuery ML forecast unavailable for %s: %s", room_id, e)
+        return None
+    if len(df) < hours:  # the model's horizon has run out: retrain with scripts/bq_setup.py --ml
+        return None
+    df["hour"] = pd.to_datetime(df["hour"])
+    for c in ("forecast", "low", "high"):
+        df[c] = df[c].astype(float).clip(lower=0)  # people cannot be negative
+    return df[["hour", "forecast", "low", "high"]]
+
+
+def bqml_anomalies(store: Store, room_id: str, limit: int = 8) -> pd.DataFrame | None:
+    """Unusual energy hours from the ARIMA_PLUS energy model, or None if it is unavailable."""
+    if not getattr(store, "supports_ml", False):
+        return None
+    try:
+        df = store.query(f"""
+            SELECT DATETIME(hour) AS hour, kwh, (lower_bound + upper_bound) / 2 AS expected,
+                   anomaly_probability AS score
+            FROM ML.DETECT_ANOMALIES(MODEL energy_model, STRUCT(0.99 AS anomaly_prob_threshold))
+            WHERE room_id = '{room_id}' AND is_anomaly
+            ORDER BY hour DESC
+            LIMIT {limit}
+        """)
+    except Exception as e:
+        log.info("BigQuery ML anomalies unavailable for %s: %s", room_id, e)
+        return None
+    df["hour"] = pd.to_datetime(df["hour"])
+    return df.sort_values("hour")
+
+
 def room_detail(store: Store, room_id: str) -> dict:
     room = ROOM_BY_ID[room_id]
     hist = _hourly(store, room_id, days=28)
     recent = hist[hist["hour"] >= hist["hour"].max() - pd.Timedelta(hours=47)]
-    fc = seasonal_forecast(hist)
-    anomalies = detect_anomalies(hist).tail(8)
+    ml_fc = bqml_forecast(store, room_id, after=hist["hour"].max()) if not hist.empty else None
+    fc = ml_fc if ml_fc is not None else seasonal_forecast(hist)
+    ml_an = bqml_anomalies(store, room_id)
+    anomalies = ml_an if ml_an is not None else detect_anomalies(hist).tail(8)
 
     def series(df, cols):
         return {"hour": [t.isoformat() for t in df["hour"]],
@@ -176,8 +233,11 @@ def room_detail(store: Store, room_id: str) -> dict:
         "room": room.as_row(),
         "recent": series(recent, ["avg_people", "max_co2_ppm", "avg_temp_c", "kwh", "ac_on_frac"]),
         "forecast": series(fc, ["forecast", "low", "high"]),
-        "forecast_method": "hour-of-week seasonal baseline (local)" if settings.backend != "bigquery"
-        else "BigQuery ML ARIMA_PLUS when trained, else seasonal baseline",
-        "anomalies": [{"hour": a.hour.isoformat(), "kwh": round(a.kwh, 2), "expected": round(a.expected, 2),
-                       "score": round(a.score, 1)} for a in anomalies.itertuples()],
+        "forecast_method": ("BigQuery ML ARIMA_PLUS (model occupancy_forecast, 80% interval)" if ml_fc is not None
+                            else "hour-of-week seasonal baseline"),
+        "anomaly_method": ("BigQuery ML ARIMA_PLUS (ML.DETECT_ANOMALIES, model energy_model)" if ml_an is not None
+                           else "robust z-score against the same hour of the week"),
+        "anomalies": [{"hour": a.hour.isoformat(), "kwh": round(float(a.kwh), 2),
+                       "expected": round(float(a.expected), 2), "score": round(float(a.score), 3)}
+                      for a in anomalies.itertuples()],
     }

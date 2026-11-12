@@ -8,6 +8,7 @@ templated briefs and the tested question set, and says so.
 from __future__ import annotations
 
 import json
+import time
 import logging
 from functools import lru_cache
 
@@ -33,6 +34,22 @@ def _client():
         return genai.Client(vertexai=True, project=settings.gcp_project, location=settings.gemini_location,
                             http_options=http)
     return genai.Client(api_key=settings.gemini_api_key, http_options=http)
+
+
+RETRY_CODES = {429, 500, 502, 503, 504}  # "high demand", rate limit, transient server errors
+
+
+def _generate(client, retries: int = 3, **kwargs):
+    """generate_content with retries on Gemini's temporary errors (1 s, 2 s, 4 s back-off)."""
+    for attempt in range(retries + 1):
+        try:
+            return client.models.generate_content(**kwargs)
+        except Exception as e:
+            if getattr(e, "code", None) not in RETRY_CODES or attempt == retries:
+                raise
+            wait = 2 ** attempt
+            log.warning("Gemini %s, retrying in %ss", getattr(e, "code", "error"), wait)
+            time.sleep(wait)
 
 
 def _rows(df: pd.DataFrame, n: int = 200) -> list[dict]:
@@ -176,7 +193,7 @@ def daily_brief(actions: list[dict], kpis: dict) -> dict:
     try:
         client = _client()
         try:
-            resp = client.models.generate_content(
+            resp = _generate(client,
                 model=settings.gemini_model,
                 contents=json.dumps(payload, default=str),
                 config=types.GenerateContentConfig(system_instruction=BRIEF_SYSTEM, temperature=0.2,
@@ -187,7 +204,7 @@ def daily_brief(actions: list[dict], kpis: dict) -> dict:
                 raise
             # Some models reject optional settings; retry with the instructions inline and defaults.
             log.warning("Gemini brief retry without optional settings: %s", first)
-            resp = client.models.generate_content(
+            resp = _generate(client,
                 model=settings.gemini_model,
                 contents=BRIEF_SYSTEM + "\nReturn only the JSON object.\n\n" + json.dumps(payload, default=str),
             )
@@ -252,7 +269,7 @@ def chart_caption(action: dict) -> dict:
             "points": [{"x": str(a), "y": b} for a, b in zip(chart["x"][:40], chart["y"][:40])],
             "reference_line": chart.get("ref")}
     try:
-        resp = _client().models.generate_content(
+        resp = _generate(_client(),
             model=settings.gemini_model, contents=json.dumps(data, default=str),
             config=types.GenerateContentConfig(system_instruction=CAPTION_SYSTEM, temperature=0.2),
         )
@@ -324,7 +341,7 @@ def ask(store: Store, question: str) -> dict:
     last_sql, last_rows, trace = None, [], []
     try:
         for _ in range(MAX_TOOL_TURNS):
-            resp = _client().models.generate_content(model=settings.gemini_model, contents=contents, config=cfg)
+            resp = _generate(_client(), model=settings.gemini_model, contents=contents, config=cfg)
             calls = resp.function_calls or []
             if not calls:
                 return {"answer": (resp.text or "").strip(), "sql": last_sql, "rows": last_rows,

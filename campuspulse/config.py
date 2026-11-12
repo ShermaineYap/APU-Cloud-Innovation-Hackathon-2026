@@ -67,6 +67,13 @@ class Settings:
 
     ingest_key: str = field(default_factory=lambda: os.getenv("CP_INGEST_KEY", "dev-ingest-key"))
     live_simulator: bool = field(default_factory=lambda: _bool("CP_LIVE_SIM", True))
+    # How live simulated readings are produced: "thread" (a loop every 30 s, for a laptop or an
+    # always-on server) or "request" (catch up on each request: Cloud Run with request-based
+    # billing gives no CPU between requests, and this keeps it inside the free tier).
+    sim_mode: str = field(default_factory=lambda: os.getenv("CP_SIM_MODE", "thread"))
+    # Create tables, views and reference data on start. The deploy script does this once, so a
+    # Cloud Run cold start can skip it and come up faster.
+    setup_on_start: bool = field(default_factory=lambda: _bool("CP_SETUP_ON_START", True))
     history_days: int = field(default_factory=lambda: int(os.getenv("CP_HISTORY_DAYS", "28")))
 
     # Electricity price used for savings estimates. An assumption, shown in the UI.

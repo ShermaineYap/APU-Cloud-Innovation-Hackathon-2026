@@ -59,10 +59,10 @@ On the demo data a typical teaching day saves about **40% of cooling energy** an
 | --- | --- | --- |
 | IoT | ESP32 + SCD40 (CO₂, temp, RH) + PIR + optional current clamp | True NDIR CO₂ and motion for about RM 200 a room |
 | Network | MQTT QoS 1 → broker → bridge → HTTPS ingest (or direct HTTPS) | Acknowledged delivery we can measure; lost reports become a signal |
-| Ingest | Cloud Run, Pub/Sub push | Serverless, one container, scales to zero outside judging week |
+| Ingest | Cloud Run, Pub/Sub push | Serverless, one container, scales to zero when idle |
 | Warehouse | BigQuery: partitioned `readings`, curated views | One SQL source of truth for the app, the engine and Gemini |
-| Models | BigQuery ML `ARIMA_PLUS` (occupancy forecast, energy anomalies) | Forecasting in SQL, no training pipeline to maintain |
-| AI | Gemini on Vertex AI: JSON-mode brief, function-calling SQL agent | Explains and explores; never invents figures |
+| Models | BigQuery ML `ARIMA_PLUS` (occupancy forecast and energy anomalies in the room drawer) | Forecasting in SQL, no training pipeline to maintain |
+| AI | Gemini (AI Studio key or Vertex AI): JSON-mode brief, chart captions, function-calling SQL agent | Explains and explores; never invents figures |
 | App | FastAPI + vanilla JS + Chart.js on Cloud Run | Fast to load, nothing to build |
 
 Locally the same BigQuery SQL runs on DuckDB, transpiled by sqlglot, so the whole system works on a laptop with no cloud account. The local forecast is an hour-of-week seasonal baseline, the same weekly pattern ARIMA_PLUS captures.
@@ -120,13 +120,28 @@ curl -X POST localhost:8080/api/ingest -H 'X-Device-Key: dev-ingest-key' -H 'Con
   -d '{"device_id":"esp32-b0805","room_id":"B-08-05","occupied":true,"co2_ppm":812,"temp_c":24.6,"rssi_dbm":-61,"watts":2100}'
 ```
 
-## Deploy to Google Cloud
+## Deploy to Google Cloud (free tier)
 
 ```bash
+gcloud auth login && gcloud auth application-default login
 PROJECT_ID=your-project ./deploy/deploy.sh
+python scripts/cloud_check.py        # PASS/FAIL for every query on BigQuery and every endpoint
 ```
 
-This enables the APIs, creates a service account, builds the BigQuery dataset, views and history, and deploys Cloud Run with Gemini on Vertex AI. Train the BigQuery ML models afterwards with `python scripts/bq_setup.py --ml`. Refresh the timetable to the current week with `python scripts/import_apu_timetable.py --week YYYY-MM-DD` (a Monday). Firmware setup is in [firmware/README.md](firmware/README.md).
+The script enables the APIs, creates a service account, builds the BigQuery dataset, views and 28 days of history, trains the two BigQuery ML `ARIMA_PLUS` models, creates the Pub/Sub topic and push subscription, and deploys Cloud Run. Gemini uses `GEMINI_API_KEY` from your `.env` (AI Studio) if set, otherwise Vertex AI. The ingest key and service URL are saved to `.deploy.env` (git-ignored); redeploy without retraining with `SKIP_ML=1`.
+
+It is sized to stay inside the Google Cloud free tier:
+
+| Service | Setting | Free tier (per month) |
+| --- | --- | --- |
+| Cloud Run | scales to zero, CPU billed only during requests, one instance | 2 M requests, 180,000 vCPU-seconds |
+| Simulated readings | produced on the next request (catch-up), not by a background loop | |
+| BigQuery | live queries anchored on a constant time, so they read recent partitions only; shared 20-second cache; the dashboard stops polling in hidden tabs | 1 TiB queries, 10 GiB storage |
+| BigQuery ML | trained once with a 30-day horizon; the room drawer reads `ML.FORECAST` | |
+| Pub/Sub | readings flow ingest → topic → push subscription → BigQuery | 10 GiB messages |
+| Gemini | AI Studio key, with retries on "high demand" errors | free tier of the model |
+
+The first request after an idle spell takes about 10 seconds while the service wakes up. Refresh the timetable to another week with `python scripts/import_apu_timetable.py --week YYYY-MM-DD` (a Monday). Firmware setup is in [firmware/README.md](firmware/README.md).
 
 ## Repository
 
@@ -139,7 +154,7 @@ web/static/         dashboard
 firmware/           ESP32 node (MQTT QoS 1 or HTTPS)
 edge/               YOLO people counter (camera node, optional)
 deploy/, scripts/   Cloud Run deploy, BigQuery setup
-tests/              29 tests: guard, engine finds planted problems, API, camera ingest, report, Gemini loop
+tests/              41 tests: guard, engine finds planted problems, API, camera, control, cloud paths (BigQuery ML, Pub/Sub, catch-up), Gemini loop
 ```
 
 ## API
