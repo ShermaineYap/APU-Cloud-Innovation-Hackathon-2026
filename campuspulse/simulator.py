@@ -66,6 +66,8 @@ class Fleet:
         self.state = {r.room_id: RoomState(attendance={}) for r in ROOMS}
         self.end = end or datetime.now(timezone.utc)
         self.history_start = self.end - timedelta(days=settings.history_days)
+        # room_id -> AC mode set by approved changes (see control.py); shared with the control plane.
+        self.policies: dict[str, str] = {}
 
     # -- behaviour ---------------------------------------------------------
     def _people(self, room: Room, local: datetime, st: RoomState) -> int:
@@ -92,8 +94,14 @@ class Fleet:
                 return int(max(0, self.rng.normal(n, max(1.0, n * 0.04))))
         return 0
 
-    def _ac_on(self, room: Room, local: datetime) -> bool:
+    def _ac_on(self, room: Room, local: datetime, people: int = 0) -> bool:
         wd, h = local.weekday(), local.hour + local.minute / 60
+        mode = self.policies.get(room.room_id, "schedule")
+        if mode == "occupancy":
+            # Cool while people are in, while a class is booked, and 1 hour before it starts.
+            return people > 0 or any(s.start_min / 60 - 1 <= h < s.end_min / 60 for s in slots_for(room.room_id, wd))
+        if mode == "after_hours_off" and (wd >= 5 or not 7.5 <= h < 21):
+            return False
         days_ago = (self.end.astimezone(settings.timezone).date() - local.date()).days
         if room.room_id == WEEKEND_AC_ROOM and wd >= 5 and days_ago <= 9:
             return True  # left on by mistake
@@ -107,7 +115,7 @@ class Fleet:
         st = self.state[room.room_id]
         local = ts.astimezone(settings.timezone)
         people = self._people(room, local, st)
-        ac = self._ac_on(room, local)
+        ac = self._ac_on(room, local, people)
 
         vol = _volume(room)
         ach = 3.0 if ac else 0.6

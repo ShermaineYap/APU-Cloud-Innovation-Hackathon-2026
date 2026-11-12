@@ -43,9 +43,14 @@ class Action:
     def rm_per_week(self) -> float:
         return round(self.kwh_per_week * settings.tariff_rm_per_kwh, 2)
 
+    @property
+    def kg_co2e_per_week(self) -> float:
+        return round(self.kwh_per_week * settings.grid_kg_co2e_per_kwh, 1)
+
     def as_dict(self) -> dict:
         d = asdict(self)
         d.update(id=self.id, rm_per_week=self.rm_per_week, kwh_per_week=round(self.kwh_per_week, 1),
+                 kg_co2e_per_week=self.kg_co2e_per_week,
                  confidence_level="high" if self.confidence >= 80 else "medium" if self.confidence >= 55 else "low")
         return d
 

@@ -24,6 +24,10 @@ CampusPulse watches APU's teaching rooms, works out where energy and comfort are
 | Room drawer | Last 48 hours, tomorrow's forecast, unusual energy hours | `analytics.py` → `room_detail` |
 | Can we trust the data? | 0–100 confidence per sensor node from delivery, signal, freshness and stuck-sensor checks | `network.py` |
 | Edge camera | YOLO counts people on the device; only the number is sent | `edge/people_counter.py` |
+| Closed loop | Approve an AC change → each room gets its new AC mode over MQTT (or HTTPS pull); simulated rooms obey | `control.py`, `api.py` → `decide`, firmware relay on GPIO26 |
+| Carbon | kg CO₂e beside every kWh and ringgit figure | `config.py` → `grid_kg_co2e_per_kwh` |
+| Where can I study? | Free rooms for students, already-cooled rooms first | `study.py` → `free_rooms` |
+| Demo clock | Replay the floor plan at any hour of the last 7 days; gaps back-filled on start | `analytics.py` → `room_states(at=)`, `app.js` → `goReplay` |
 
 ---
 
@@ -216,6 +220,19 @@ Constants: `LIVE_ROOM` (default `B-08-05`), `STUDENTS_PER_INTAKE` (12), `BLOCK_N
 | `GET /` | `index` | The dashboard. |
 
 Internals: `Reading.to_row` validates and normalises a reading; `_accept` stores it (or publishes to Pub/Sub) and remembers which rooms have live hardware; `_live_loop` adds simulated readings every 30 s, skipping rooms where real hardware is reporting; `lifespan` sets up the store, clears stale data and seeds 28 days of history on first start; `Cache` keeps expensive results for a short time.
+
+### `campuspulse/control.py`: closing the loop
+| Function / class | What it does |
+| --- | --- |
+| `ControlPlane.apply(action, status)` | On approve or dismiss of an AC action, recomputes each room's mode (strongest wins: `schedule` < `after_hours_off` < `occupancy`) and sends a command to every room that changed. |
+| `ControlPlane.sync(actions, status)` | Rebuilds modes from the decision log after a restart, without re-sending. |
+| `ControlPlane._publish(cmd)` | MQTT QoS 1, retained, on `campuspulse/<room>/command` when `CP_MQTT_HOST` is set. |
+| `ControlPlane.state_for(room)` | What `GET /api/rooms/{id}/command` returns to a polling node. |
+
+`Fleet._ac_on(room, time, people)` obeys the same modes, so the next simulated readings carry the saving.
+
+### `campuspulse/study.py`: where can I study?
+`free_rooms(states, at)`: rooms with no class booked for at least 30 minutes, sensor reporting and nobody's class running, ranked by already-cooled first, then fresher air, cooler room and longer free time. Closed outside 07:30–21:00 on weekdays.
 
 ### `campuspulse/mqtt_bridge.py`
 `main()` subscribes to `campuspulse/+/telemetry` at QoS 1 and forwards each message to `/api/ingest`.

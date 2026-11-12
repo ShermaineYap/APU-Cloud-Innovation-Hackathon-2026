@@ -195,7 +195,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .proj-bars .val { font: 600 1rem/1 var(--cond); text-align: right; font-variant-numeric: tabular-nums; }
 
 /* ask */
-.ask, .network { margin-top: clamp(2rem, 5vw, 3.5rem); }
+.study, .ask, .network { margin-top: clamp(2rem, 5vw, 3.5rem); }
 .ask-form { display: flex; gap: 0.5rem; max-width: 56rem; }
 .ask-form input {
   flex: 1; min-width: 0; padding: 0.7rem 0.9rem; border: 1.5px solid var(--rule); border-radius: var(--radius-ui);
@@ -266,3 +266,25 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Status tag sits on its own line so it never covers the room code in narrow cards. */
 .room .tag, .room .live { position: static; align-self: flex-end; line-height: 1; margin: -0.1rem -0.1rem 0.15rem 0; white-space: nowrap; }
+
+/* ---------- closed loop: AC modes and device commands ---------- */
+.room .acmode { font-size: 0.7rem; font-weight: 600; color: var(--good); }
+.commands { margin-top: 1.1rem; padding-top: 0.9rem; border-top: 1px solid var(--rule); }
+.commands h3 { margin: 0 0 0.3rem; font: 600 1.15rem/1.2 var(--cond); }
+.commands ol { list-style: none; margin: 0.6rem 0 0; padding: 0; display: grid; gap: 0.45rem; }
+.commands li { display: flex; flex-wrap: wrap; gap: 0.2rem 0.6rem; align-items: baseline; font-size: 0.88rem; padding: 0.4rem 0.55rem; background: var(--panel); border-left: 3px solid var(--good); }
+.commands li.empty { border-left-color: var(--rule); color: var(--muted); }
+.commands .when { font-family: var(--cond); font-weight: 600; font-variant-numeric: tabular-nums; }
+.commands code { font-size: 0.75rem; color: var(--muted); }
+.commands .hint { flex-basis: 100%; font-size: 0.78rem; }
+
+/* ---------- where can I study? ---------- */
+.study-msg { margin: 0 0 0.7rem; font-weight: 500; }
+.study-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr)); gap: 0.6rem; }
+.study-room button { width: 100%; text-align: left; display: flex; flex-direction: column; gap: 0.15rem; padding: 0.6rem 0.7rem; background: #fff; border: 1.5px solid var(--rule); border-radius: var(--radius-room, 4px); cursor: pointer; font: inherit; color: var(--ink); }
+.study-room button:hover { border-color: var(--ink); }
+.study-room.cooled button { border-color: var(--good); box-shadow: inset 4px 0 0 var(--good); }
+.study-room .code { font: 700 1.3rem/1 var(--cond); }
+.study-room .name, .study-room .why { font-size: 0.82rem; color: var(--muted); }
+.study-room .until { font-size: 0.9rem; }
+.study-room .ok { color: var(--good); }

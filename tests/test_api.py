@@ -103,3 +103,20 @@ def test_overview_replays_a_past_time():
             assert weekend["AUD-2"]["status"] == "empty_cooled"
         assert c.get("/api/overview", params={"at": "not-a-time"}).status_code == 422
         assert c.get("/").headers["cache-control"] == "no-cache"
+
+
+def test_study_finder_lists_free_rooms_and_closes_at_night():
+    import pandas as pd
+    from campuspulse.campus import TIMETABLE
+    with client() as c:
+        last = pd.Timestamp(c.get("/api/overview").json()["replay_range"]["last"])
+        wed = (last - pd.Timedelta(days=(last.weekday() - 2) % 7 or 7)).normalize()
+        st = c.get("/api/overview", params={"at": f"{wed:%Y-%m-%d}T11:00"}).json()["study"]
+        assert st["open"]
+        booked = {s.room_id for s in TIMETABLE if s.weekday == 2 and s.start_min <= 660 < s.end_min}
+        for r in st["rooms"]:
+            assert r["room_id"] not in booked and r["free_minutes"] >= 30
+        cooled = [r["cooled"] for r in st["rooms"]]
+        assert cooled == sorted(cooled, reverse=True)  # already-cooled rooms first
+        night = c.get("/api/overview", params={"at": f"{wed:%Y-%m-%d}T23:00"}).json()["study"]
+        assert not night["open"] and night["rooms"] == []

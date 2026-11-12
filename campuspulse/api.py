@@ -18,11 +18,12 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
-from . import __version__, analytics, decisions, network, report
+from . import __version__, analytics, decisions, network, report, study
 from .agent import ask, chart_caption, daily_brief, suggestions
 from .campus import LIVE_ROOM, ROOM_BY_ID
 from .network import is_camera
 from .config import settings
+from .control import control
 from .simulator import Fleet
 from .store import get_store
 
@@ -67,6 +68,7 @@ def _live_loop(fleet: Fleet, stop: threading.Event):
     store = get_store()
     while not stop.wait(30):
         try:
+            _sync_control()
             rows = fleet.tick(datetime.now(timezone.utc))
             # Where real hardware is reporting, it replaces the simulated twin: a live sensor node
             # replaces the whole row, a live camera replaces just the head count.
@@ -88,6 +90,7 @@ async def lifespan(app: FastAPI):
     store = get_store()
     store.setup()
     fleet = Fleet()
+    fleet.policies = control.policies  # simulated rooms obey approved AC changes
     if store.reading_count() and store.stale_rooms():
         log.info("Campus model changed; clearing old readings")
         store.clear_readings()
@@ -95,7 +98,17 @@ async def lifespan(app: FastAPI):
         log.info("Seeding %d days of simulated history", settings.history_days)
         store.insert_readings(fleet.history())
     else:
-        fleet.history()  # warm the room state so live rows continue smoothly
+        rows = fleet.history()  # also warms the room state so live rows continue smoothly
+        # Fill hours when the service was not running, so replay and the 7-day figures never hit a hole.
+        have = store.query("SELECT DISTINCT TIMESTAMP_TRUNC(ts, HOUR) AS h FROM readings")["h"]
+        have = {pd.Timestamp(h).tz_localize("UTC") if pd.Timestamp(h).tzinfo is None
+                else pd.Timestamp(h).tz_convert("UTC") for h in have}
+        this_hour = pd.Timestamp.now(tz="UTC").floor("h")
+        gap = [r for r in rows
+               if (h := pd.Timestamp(r["ts"]).tz_convert("UTC").floor("h")) not in have and h < this_hour]
+        if gap:
+            log.info("Back-filling %d simulated readings for hours the service was down", len(gap))
+            store.insert_readings(gap)
     stop = threading.Event()
     if settings.live_simulator:
         threading.Thread(target=_live_loop, args=(fleet, stop), daemon=True).start()
@@ -200,12 +213,19 @@ def _mode() -> dict:
             "live_room": LIVE_ROOM, "live_node_online": live_seen,
             "live_node_last_seen": last.isoformat() if last else None,
             "real_readings": state["real_count"], "tariff_rm_per_kwh": settings.tariff_rm_per_kwh,
+            "grid_kg_co2e_per_kwh": settings.grid_kg_co2e_per_kwh,
             "co2_limit_ppm": settings.co2_limit_ppm}
 
 
 @app.get("/api/health")
 def health():
     return {"ok": True, "version": __version__, **_mode()}
+
+
+def _sync_control():
+    """After a restart, rebuild each room's AC mode from the decision log."""
+    if not control.synced:
+        control.sync(_actions(), _decision_status())
 
 
 @app.get("/api/overview")
@@ -220,10 +240,13 @@ def overview(at: str | None = None):
             raise HTTPException(422, "at must be a local date-time like 2026-11-04T10:00")
         if replay.tzinfo is not None:
             replay = replay.tz_convert(settings.timezone).tz_localize(None)
+    rooms = [r | {"ac_mode": control.mode(r["room_id"])} for r in analytics.room_states(store, at=replay)]
+    moment = replay.to_pydatetime() if replay is not None else datetime.now(settings.timezone).replace(tzinfo=None)
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "kpis": cache.get("kpis", 60, lambda: analytics.kpis(store)),
-        "rooms": analytics.room_states(store, at=replay),
+        "rooms": rooms,
+        "study": study.free_rooms(rooms, moment),
         "replay_at": replay.isoformat() if replay is not None else None,
         "replay_range": cache.get("replay_range", 300, lambda: analytics.replay_range(store)),
         "mode": _mode(),
@@ -261,12 +284,33 @@ def decide(action_id: str, body: Decision):
     act = next((a for a in _actions() if a["id"] == action_id), None)
     if act is None:
         raise HTTPException(404, "action not found; refresh the brief")
+    _sync_control()  # before logging, so this decision is what changes the rooms' AC modes
     get_store().insert_decision({
         "decided_at": datetime.now(timezone.utc), "action_id": action_id, "kind": act["kind"],
         "title": act["title"], "status": body.status, "kwh_per_week": act["kwh_per_week"],
         "rm_per_week": act["rm_per_week"], "decided_by": body.decided_by,
     })
-    return {"ok": True, "action_id": action_id, "status": body.status}
+    commands = control.apply(act, body.status, body.decided_by)
+    return {"ok": True, "action_id": action_id, "status": body.status, "commands": commands}
+
+
+@app.get("/api/commands")
+def command_log():
+    """Device commands sent for approved changes, newest first, and each room's current AC mode."""
+    _sync_control()
+    return {"commands": control.log[:50], "modes": dict(control.policies),
+            "transport": "mqtt" if settings.mqtt_host else "https-pull"}
+
+
+@app.get("/api/rooms/{room_id}/command")
+def room_command(room_id: str, x_device_key: str | None = Header(default=None)):
+    """HTTPS pull for nodes not on MQTT: the AC mode this room should run."""
+    if not x_device_key or not hmac.compare_digest(x_device_key, settings.ingest_key):
+        raise HTTPException(401, "missing or wrong X-Device-Key")
+    if room_id not in ROOM_BY_ID:
+        raise HTTPException(404, "unknown room")
+    _sync_control()
+    return control.state_for(room_id)
 
 
 @app.get("/api/decisions")

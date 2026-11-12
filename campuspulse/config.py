@@ -56,6 +56,13 @@ class Settings:
     gemini_model: str = field(default_factory=lambda: os.getenv("CP_GEMINI_MODEL", "gemini-3.5-flash-lite"))
     gemini_location: str = field(default_factory=lambda: os.getenv("CP_GEMINI_LOCATION", "global"))
 
+    # MQTT broker for device commands (approved AC changes). Unset: nodes pull commands over HTTPS.
+    mqtt_host: str | None = field(default_factory=lambda: os.getenv("CP_MQTT_HOST") or None)
+    mqtt_port: int = field(default_factory=lambda: int(os.getenv("CP_MQTT_PORT", "1883")))
+    mqtt_user: str | None = field(default_factory=lambda: os.getenv("CP_MQTT_USER") or None)
+    mqtt_pass: str | None = field(default_factory=lambda: os.getenv("CP_MQTT_PASS") or None)
+    mqtt_tls: bool = field(default_factory=lambda: _bool("CP_MQTT_TLS", False))
+
     ingest_key: str = field(default_factory=lambda: os.getenv("CP_INGEST_KEY", "dev-ingest-key"))
     live_simulator: bool = field(default_factory=lambda: _bool("CP_LIVE_SIM", True))
     history_days: int = field(default_factory=lambda: int(os.getenv("CP_HISTORY_DAYS", "28")))
@@ -63,6 +70,9 @@ class Settings:
     # Electricity price used for savings estimates. An assumption, shown in the UI.
     # Set it from the current TNB commercial tariff before presenting.
     tariff_rm_per_kwh: float = field(default_factory=lambda: float(os.getenv("CP_TARIFF_RM_PER_KWH", "0.50")))
+    # Grid emission factor for carbon figures (kg CO2e per kWh). An assumption, shown in the UI.
+    # 0.758 is the commonly cited Peninsular Malaysia grid factor; set CP_GRID_KG_CO2E_PER_KWH to update it.
+    grid_kg_co2e_per_kwh: float = field(default_factory=lambda: float(os.getenv("CP_GRID_KG_CO2E_PER_KWH", "0.758")))
     co2_limit_ppm: int = field(default_factory=lambda: int(os.getenv("CP_CO2_LIMIT_PPM", "1000")))
     timezone: ZoneInfo = field(default_factory=lambda: ZoneInfo(os.getenv("CP_TZ", "Asia/Kuala_Lumpur")))
 

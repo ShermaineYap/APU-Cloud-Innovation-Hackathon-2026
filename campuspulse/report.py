@@ -64,12 +64,13 @@ def build_pdf(brief: dict, actions: list[dict], kpis: dict, status: dict[str, st
     figures = [
         (f"{kpis['wasted_kwh']:,.0f} kWh", f"cooling spent on empty rooms ({_rm(kpis['wasted_rm'])})"),
         (f"{kpis['wasted_share'] * 100:.0f}%", "of all cooling energy went to empty rooms"),
+        (f"{kpis.get('wasted_kg_co2e', 0) / 1000:,.1f} t", "CO2e emitted cooling empty rooms"),
         (f"{kpis['stale_air_hours']:,}", f"occupied room-hours above {settings.co2_limit_ppm} ppm CO2"),
         (f"{kpis['avg_utilisation'] * 100:.0f}%", "average seats used in booked rooms"),
         (f"{kpis['fleet_confidence']}/100", "sensor data confidence"),
     ]
     fig_table = Table([[_p(f"<b>{v}</b>", "body") for v, _ in figures], [_p(t, "small") for _, t in figures]],
-                      colWidths=[width / 5] * 5)
+                      colWidths=[width / len(figures)] * len(figures))
     fig_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), PANEL), ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, 0), 6), ("BOTTOMPADDING", (0, -1), (-1, -1), 6),
@@ -107,7 +108,8 @@ def build_pdf(brief: dict, actions: list[dict], kpis: dict, status: dict[str, st
     if approved:
         line = (f"<b>Approved so far:</b> {len(approved)} change(s) worth {kwh:,.0f} kWh a week "
                 f"({_rm(kwh * settings.tariff_rm_per_kwh)}), about {_rm(kwh * settings.tariff_rm_per_kwh * 52)} a year "
-                f"if sustained. All ranked changes together: {total_possible:,.0f} kWh a week.")
+                f"if sustained, avoiding about {kwh * settings.grid_kg_co2e_per_kwh * 52 / 1000:,.1f} t CO2e a year. "
+                f"All ranked changes together: {total_possible:,.0f} kWh a week.")
     else:
         line = (f"<b>No changes approved yet.</b> All ranked changes together are worth {total_possible:,.0f} kWh a week "
                 f"({_rm(total_possible * settings.tariff_rm_per_kwh)}).")
@@ -119,7 +121,8 @@ def build_pdf(brief: dict, actions: list[dict], kpis: dict, status: dict[str, st
         f"Rooms and classes are APU's real timetable for the week of {date.fromisoformat(WEEK_OF).day} {date.fromisoformat(WEEK_OF):%B %Y} "
         f"(public APSpace timetable feed). "
         f"{live} are simulated and labelled as such. Seat counts, AC loads and class sizes are estimates "
-        f"(about 12 students per intake); energy is priced at RM {settings.tariff_rm_per_kwh:.2f}/kWh. "
+        f"(about 12 students per intake); energy is priced at RM {settings.tariff_rm_per_kwh:.2f}/kWh and carbon at "
+        f"{settings.grid_kg_co2e_per_kwh:.3f} kg CO2e/kWh (Peninsular Malaysia grid). "
         f"Every saving above comes from the SQL and rows shown in the CampusPulse dashboard. "
         f"Brief written by {escape(brief.get('source', 'template'))}.", "small"))
 

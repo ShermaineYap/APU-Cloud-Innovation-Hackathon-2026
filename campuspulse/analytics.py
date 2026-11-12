@@ -111,12 +111,14 @@ def kpis(store: Store) -> dict:
         "window": "last 7 days",
         "wasted_kwh": round(wasted, 1),
         "wasted_rm": round(wasted * settings.tariff_rm_per_kwh, 2),
+        "wasted_kg_co2e": round(wasted * settings.grid_kg_co2e_per_kwh, 1),
         "wasted_share": round(wasted / float(r.total_kwh), 3) if r.total_kwh else 0,
         "stale_air_hours": int(r.stale_air_hours or 0),
         "avg_utilisation": round(float(r.avg_utilisation or 0), 3),
         "fleet_confidence": int(np.mean([h.confidence for h in health])) if health else 0,
         "low_confidence_nodes": sum(h.level == "low" for h in health),
         "tariff_rm_per_kwh": settings.tariff_rm_per_kwh,
+        "grid_kg_co2e_per_kwh": settings.grid_kg_co2e_per_kwh,
     }
 
 

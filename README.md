@@ -28,6 +28,10 @@ CampusPulse runs on **APU's real teaching week**: 20 real rooms (Auditoriums 1�
 6. **What if.** Press *What if* on any change, or approve it, and the week is recalculated on the spot: kWh and ringgit saved, and how far empty-room cooling falls. The rooms involved are outlined on the floor plan.
 7. **Estates report.** One-page PDF of the week's brief, ranked changes, decisions and data caveats, ready to email to Facilities (`/api/report.pdf`).
 8. **Charts that explain themselves.** Each evidence chart gets a one-line caption from Gemini, written only from the chart's own numbers.
+9. **Closed loop: approve, and the rooms obey.** Approving an air-conditioning change sends every room it covers its new AC mode (*follows occupancy* or *off after hours*) over MQTT on `campuspulse/<room>/command` (QoS 1, retained), or the node pulls it from `GET /api/rooms/<room>/command`. The ESP32 drives a relay on GPIO26; simulated rooms obey from their next reading, so the floor plan shows empty rooms going dark. Dismissing reverts it. Every command is listed under *Sent to the rooms*.
+10. **Carbon, not just ringgit.** Every saving is also shown in kg CO₂e (grid factor `CP_GRID_KG_CO2E_PER_KWH`, default 0.758 for Peninsular Malaysia), in the brief, the actions, What if and the Estates report.
+11. **Where can I study?** A student view of free rooms with no class booked for the next 30 minutes, ranked so rooms *already being cooled* come first: students fill cooling the campus is paying for anyway.
+12. **Demo clock.** Replay any hour of the last 7 days (day picker, time slider, ▶ Play the day), or open `/?at=2026-11-11T14:00`. Hours when the service was down are back-filled on start, so replay never hits a hole.
 
 ## Cloud, IoT and network, converged
 
@@ -134,6 +138,9 @@ tests/              29 tests: guard, engine finds planted problems, API, camera 
 | POST | `/api/ask` | Ask the data |
 | GET | `/api/actions/{id}/caption` | One-line chart caption |
 | GET | `/api/report.pdf` | One-page Estates report |
+| GET | `/api/overview?at=…` | Floor plan and study rooms replayed at a past local time |
+| GET | `/api/commands` | Device commands sent for approved changes, and each room's AC mode |
+| GET | `/api/rooms/{id}/command` | HTTPS pull of the room's AC mode (header `X-Device-Key`) |
 
 ## Tests
 

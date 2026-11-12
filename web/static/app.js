@@ -5,6 +5,7 @@ const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const fmt = (n, d = 0) => (n == null || Number.isNaN(n) ? "–" : Number(n).toLocaleString("en-MY", { maximumFractionDigits: d, minimumFractionDigits: d }));
 const INK = "#1D2A30", MUTED = "#5C6B71", RULE = "#C3CAC5", TEAL = "#1F7A6D", BLUE = "#3B6EA8", AMBER = "#B87412", RED = "#A23B2C";
 const BLOCKS = { AUD: "Auditoriums", B: "Block B · Classrooms", TL: "Tech Labs" };
+const AC_MODE_TEXT = { schedule: "on building schedule", after_hours_off: "off after hours", occupancy: "follows occupancy" };
 const STATUS_TEXT = { in_use: "In use", empty_cooled: "Cooled, empty", stale_air: "CO₂ high", idle: "Empty", offline: "No data" };
 
 if (window.Chart) {
@@ -47,7 +48,7 @@ function renderStatus(m) {
   }`;
   $("#foot-mode").textContent =
     `Data: 1 physical node in ${m.live_room} + 20 real APU rooms on their real timetable, sensors simulated (labelled). Store: ${m.backend === "bigquery" ? "BigQuery" : "local DuckDB"}. ` +
-    `AI: ${m.gemini ? `Gemini ${m.model}` : "offline mode (no Gemini key)"}. Energy price assumption: RM ${m.tariff_rm_per_kwh}/kWh.`;
+    `AI: ${m.gemini ? `Gemini ${m.model}` : "offline mode (no Gemini key)"}. Assumptions: energy RM ${m.tariff_rm_per_kwh}/kWh, grid carbon ${m.grid_kg_co2e_per_kwh} kg CO₂e/kWh.`;
   $("#ask-mode").textContent = m.gemini
     ? "Gemini writes the SQL, CampusPulse checks it is read-only, the warehouse runs it."
     : "Offline mode: tested questions only. Add a Gemini key to ask anything.";
@@ -58,7 +59,7 @@ function renderLead(brief, kpis) {
   $("#when").textContent = `Morning brief for ${now.toLocaleDateString("en-MY", { weekday: "long", day: "numeric", month: "long" })}`;
   $("#headline").textContent = brief.headline;
   $("#figures").innerHTML =
-    `In the ${esc(kpis.window)}, <b>${fmt(kpis.wasted_kwh)} kWh</b> (about <b>RM ${fmt(kpis.wasted_rm)}</b>) went to cooling empty rooms, ` +
+    `In the ${esc(kpis.window)}, <b>${fmt(kpis.wasted_kwh)} kWh</b> (about <b>RM ${fmt(kpis.wasted_rm)}</b> and <b>${fmt((kpis.wasted_kg_co2e || 0) / 1000, 1)} t CO₂e</b>) went to cooling empty rooms, ` +
     `<b>${fmt(kpis.stale_air_hours)}</b> occupied room-hours had stale air, and booked rooms were <b>${fmt(kpis.avg_utilisation * 100)}%</b> full on average. ` +
     `Fleet data confidence is <b>${fmt(kpis.fleet_confidence)}/100</b>.`;
   $("#brief-summary").textContent = brief.summary || "";
@@ -94,6 +95,7 @@ function roomCell(r) {
       <span class="code">${esc(r.room_id)}</span>
       <span class="name">${esc(r.name)}</span>
       ${r.confidence_level === "low" ? `<span class="lowconf">Low data confidence</span>` : ""}
+      ${r.ac_mode && r.ac_mode !== "schedule" ? `<span class="acmode" title="Set by an approved change">AC ${esc(AC_MODE_TEXT[r.ac_mode] || r.ac_mode)}</span>` : ""}
       <span class="reading">${reading}</span>
       ${r.status === "in_use" || r.status === "stale_air" ? `<span class="fill" style="width:${fill}%"></span>` : ""}
     </button>`;
@@ -145,7 +147,8 @@ function renderProjection(actions) {
                  fixes ? `${fixes} data fix${fixes > 1 ? "es" : ""} that raise confidence` : ""].filter(Boolean);
   box.innerHTML = `
     <p class="proj-line"><b>${chosen.length} change${chosen.length > 1 ? "s" : ""}</b>${approvedN ? ` (${approvedN} approved)` : ""} in place:
-      saves <b>${fmt(kwh)} kWh</b> a week, about <b>RM ${fmt(kwh * tariff)}</b>, or RM ${fmt(kwh * tariff * 52)} a year if sustained.</p>
+      saves <b>${fmt(kwh)} kWh</b> a week, about <b>RM ${fmt(kwh * tariff)}</b>, or RM ${fmt(kwh * tariff * 52)} and
+      <b>${fmt(kwh * (mode.grid_kg_co2e_per_kwh || 0.758) * 52 / 1000, 1)} t CO₂e</b> a year if sustained.</p>
     <div class="proj-bars" role="img" aria-label="Empty-room cooling: ${fmt(now)} kWh now, ${fmt(after)} kWh with these changes">
       <span class="lbl">Empty-room cooling now</span><span class="track"><span class="meter now" style="width:100%"></span></span><span class="val">${fmt(now)} kWh</span>
       <span class="lbl">With these changes</span><span class="track"><span class="meter after" style="width:${now ? (after / now) * 100 : 0}%"></span></span><span class="val">${fmt(after)} kWh</span>
@@ -156,7 +159,7 @@ function renderProjection(actions) {
 
 function impactLine(a) {
   const parts = [];
-  if (a.kwh_per_week > 0.5) parts.push(`<span>Saves <b>${fmt(a.kwh_per_week)} kWh</b> / week (≈ RM ${fmt(a.rm_per_week)})</span>`);
+  if (a.kwh_per_week > 0.5) parts.push(`<span>Saves <b>${fmt(a.kwh_per_week)} kWh</b> / week (≈ RM ${fmt(a.rm_per_week)}, ${fmt(a.kg_co2e_per_week)} kg CO₂e)</span>`);
   if (a.kwh_per_week < -0.5) parts.push(`<span>Costs <b>${fmt(-a.kwh_per_week)} kWh</b> / week more</span>`);
   if (a.comfort) parts.push(`<span>${esc(a.comfort)}</span>`);
   parts.push(`<span>Confidence <span class="conf ${a.confidence_level}">${a.confidence_level} (${a.confidence})</span></span>`);
@@ -224,14 +227,35 @@ function drawEvidence(details, a) {
 async function decide(id, status, btn) {
   btn.disabled = true;
   try {
-    await api(`/api/actions/${id}/decide`, { method: "POST", body: JSON.stringify({ status }) });
+    const res = await api(`/api/actions/${id}/decide`, { method: "POST", body: JSON.stringify({ status }) });
     decided.set(id, status);
-    toast(status === "approved" ? "Approved. Logged to the decision table." : "Dismissed. Logged to the decision table.");
+    const n = res.commands?.length || 0;
+    toast(status === "approved"
+      ? (n ? `Approved and logged. AC command sent to ${n} room${n > 1 ? "s" : ""}: ${AC_MODE_TEXT[res.commands[0].ac_mode]}.` : "Approved. Logged to the decision table.")
+      : "Dismissed. Logged to the decision table.");
     renderActions(lastBrief.actions, lastBrief.brief);
+    loadCommands().catch(() => {});
+    loadOverview().catch(() => {});
   } catch (e) {
     btn.disabled = false;
     toast(`Could not save the decision: ${e.message}`);
   }
+}
+
+async function loadCommands() {
+  const d = await api("/api/commands");
+  const list = $("#commands");
+  if (!d.commands.length) {
+    list.innerHTML = `<li class="empty">Nothing sent yet. Approve an air-conditioning change to send its rooms a new AC mode.</li>`;
+    return;
+  }
+  const time = (iso) => new Date(iso).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" });
+  list.innerHTML = d.commands.slice(0, 8).map((c) => `<li>
+      <span class="when">${esc(time(c.issued_at))}</span>
+      <span><b>${esc(c.room_id)}</b> → AC ${esc(c.ac_mode_text)}${c.ac_mode === "occupancy" ? ` (pre-cool ${c.precool_min} min)` : ""}</span>
+      <code>${esc(c.topic)}</code>
+      <span class="hint">${esc(c.delivered || "sending…")}</span>
+    </li>`).join("") + (d.commands.length > 8 ? `<li class="empty">and ${d.commands.length - 8} earlier.</li>` : "");
 }
 
 function rowsTable(rows) {
@@ -478,8 +502,23 @@ $("#replay-live").addEventListener("click", () => { stopPlay(); goReplay(null).c
 $("#replay-play").addEventListener("click", () => (playTimer ? stopPlay() : startPlay()));
 $("#quiet-replay").addEventListener("click", () => startPlay());
 
+function renderStudy(st) {
+  if (!st) return;
+  $("#study-msg").textContent = st.message;
+  $("#study").innerHTML = st.rooms.map((r) => `<li class="study-room${r.cooled ? " cooled" : ""}">
+      <button type="button" data-id="${esc(r.room_id)}" aria-label="${esc(`${r.room_id}, free until ${r.free_until}, ${r.reasons.join(", ")}`)}">
+        <span class="code">${esc(r.room_id)}</span>
+        <span class="name">${esc(r.name)} · ${r.seats} seats</span>
+        <span class="until">Free until <b>${esc(r.free_until)}</b> <span class="hint">(${esc(r.free_until_why)})</span></span>
+        <span class="why">${r.cooled ? `<b class="ok">Already cooled</b> · ` : ""}${fmt(r.co2_ppm)} ppm · ${fmt(r.temp_c, 1)}°C</span>
+      </button>
+    </li>`).join("");
+  $("#study").querySelectorAll("button[data-id]").forEach((b) => b.addEventListener("click", () => openRoom(b.dataset.id)));
+}
+
 function applyOverview(o) {
   mode = o.mode;
+  renderStudy(o.study);
   setupReplayDays(o.replay_range);
   if (replayAt) renderReplayUi();
   renderStatus(o.mode);
@@ -541,6 +580,7 @@ async function restoreDecisions() {
 
 restoreDecisions().then(() => loadBrief()).catch((e) => { $("#headline").textContent = "CampusPulse could not reach its data service."; $("#figures").textContent = e.message; });
 loadSuggestions().catch(() => {});
+loadCommands().catch(() => {});
 loadNetwork().catch(() => {});
 setInterval(() => loadOverview().catch(() => {}), 30000);
 setInterval(() => loadNetwork().catch(() => {}), 60000);

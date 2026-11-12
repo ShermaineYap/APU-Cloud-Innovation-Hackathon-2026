@@ -8,6 +8,15 @@
   Network:  each report carries RSSI and how many of the previous window's
             reports the broker acknowledged. CampusPulse turns that into a
             per-room data-confidence score.
+  Acts:     when Estates approves an AC change, CampusPulse sends this room's AC mode
+            on campuspulse/<ROOM_ID>/command (QoS 1, retained), or the node polls
+            GET /api/rooms/<ROOM_ID>/command on the HTTPS transport. The mode drives a
+            relay (GPIO26) that enables the room's AC:
+              schedule         relay closed: the building's own schedule is in charge
+              after_hours_off  relay open at night and at weekends (NTP time, MYT)
+              occupancy        relay closed only while motion was seen in the last
+                               OCCUPANCY_HOLD_MS (pre-cool before booked classes is
+                               left to the building schedule in this version)
 
   Libraries (Arduino Library Manager):
     espMqttClient (bertmelis)         MQTT 3.1.1 with QoS 1 acknowledgements
@@ -18,6 +27,8 @@
   Wiring (ESP32 DevKit):
     SCD40  SDA -> GPIO21, SCL -> GPIO22, VDD -> 3V3, GND -> GND
     PIR    OUT -> GPIO27, VCC -> 5V,  GND -> GND
+    Relay  IN  -> GPIO26 (opto-isolated module; switches the AC controller's enable input,
+                          never mains directly)
     SCT-013 via burden resistor + 1.65 V bias -> GPIO34 (ADC1)
 
   Copy secrets.h.example to secrets.h and fill in Wi-Fi and broker details.
@@ -52,7 +63,14 @@ const float MAINS_VOLTS = 230.0;   // Malaysia
 #endif
 
 const int PIR_PIN = 27;
+const int RELAY_PIN = 26;
 const uint32_t REPORT_MS = 30000;
+const uint32_t OCCUPANCY_HOLD_MS = 15UL * 60 * 1000;  // keep cooling 15 min after the last motion
+const uint32_t COMMAND_POLL_MS = 5UL * 60 * 1000;     // HTTPS transport only
+
+// AC mode sent by CampusPulse; "schedule" until told otherwise.
+String acMode = "schedule";
+uint32_t lastMotionMs = 0;
 
 SensirionI2cScd4x scd4x;
 volatile bool motionSeen = false;
@@ -62,6 +80,31 @@ volatile uint16_t windowSent = 0, windowAcked = 0;
 uint16_t lastSent = 0, lastAcked = 0;
 
 void IRAM_ATTR onMotion() { motionSeen = true; }
+
+void applyCommand(const uint8_t *payload, size_t len) {
+  JsonDocument doc;
+  if (deserializeJson(doc, payload, len)) return;
+  const char *mode = doc["ac_mode"] | "";
+  if (strcmp(mode, "schedule") && strcmp(mode, "after_hours_off") && strcmp(mode, "occupancy")) return;
+  acMode = mode;
+  Serial.printf("AC mode -> %s\n", acMode.c_str());
+}
+
+// Relay closed = the AC may run. Called every loop.
+void driveRelay() {
+  bool allow = true;
+  if (acMode == "occupancy") {
+    allow = lastMotionMs && millis() - lastMotionMs < OCCUPANCY_HOLD_MS;
+  } else if (acMode == "after_hours_off") {
+    struct tm now;
+    if (getLocalTime(&now, 10)) {
+      float h = now.tm_hour + now.tm_min / 60.0;
+      bool weekday = now.tm_wday >= 1 && now.tm_wday <= 5;
+      allow = weekday && h >= 7.5 && h < 21;
+    }
+  }
+  digitalWrite(RELAY_PIN, allow ? HIGH : LOW);
+}
 
 void connectWifi() {
   if (WiFi.status() == WL_CONNECTED) return;
@@ -77,7 +120,16 @@ void setupMqtt() {
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setClientId(DEVICE_ID);
   if (strlen(MQTT_USER)) mqtt.setCredentials(MQTT_USER, MQTT_PASS);
-  mqtt.onConnect([](bool) { Serial.println("MQTT connected"); });
+  mqtt.onConnect([](bool) {
+    Serial.println("MQTT connected");
+    char cmdTopic[64];
+    snprintf(cmdTopic, sizeof(cmdTopic), "campuspulse/%s/command", ROOM_ID);
+    mqtt.subscribe(cmdTopic, 1);  // retained: the current mode arrives straight away
+  });
+  mqtt.onMessage([](const espMqttClientTypes::MessageProperties &, const char *, const uint8_t *payload,
+                    size_t len, size_t index, size_t total) {
+    if (index == 0 && len == total) applyCommand(payload, len);
+  });
   mqtt.onDisconnect([](espMqttClientTypes::DisconnectReason r) {
     Serial.printf("MQTT disconnected (%u)\n", static_cast<uint8_t>(r));
   });
@@ -88,6 +140,8 @@ void setupMqtt() {
 void setup() {
   Serial.begin(115200);
   pinMode(PIR_PIN, INPUT);
+  pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, HIGH);  // fail safe: the building schedule stays in charge
   attachInterrupt(digitalPinToInterrupt(PIR_PIN), onMotion, RISING);
 
   Wire.begin(21, 22);
@@ -101,6 +155,7 @@ void setup() {
 #endif
 
   connectWifi();
+  configTime(8 * 3600, 0, "pool.ntp.org", "time.google.com");  // Malaysia time, for after_hours_off
 #if TRANSPORT_MQTT
   setupMqtt();
   mqtt.connect();
@@ -166,15 +221,42 @@ void report() {
   Serial.printf("%s %s\n", occupied ? "occupied" : "empty", body);
 }
 
+#if !TRANSPORT_MQTT
+// HTTPS transport: ask CampusPulse which AC mode this room should run.
+void pollCommand() {
+  String url = String(INGEST_URL);
+  url.replace("/api/ingest", String("/api/rooms/") + ROOM_ID + "/command");
+  WiFiClientSecure tls;
+  tls.setInsecure();  // demo: pin the Cloud Run certificate for production
+  HTTPClient http;
+  http.begin(tls, url);
+  http.addHeader("X-Device-Key", INGEST_KEY);
+  if (http.GET() == 200) {
+    String body = http.getString();
+    applyCommand((const uint8_t *)body.c_str(), body.length());
+  }
+  http.end();
+}
+#endif
+
 void loop() {
   static uint32_t last = 0;
   if (WiFi.status() != WL_CONNECTED) connectWifi();
 #if TRANSPORT_MQTT
   if (WiFi.status() == WL_CONNECTED && !mqtt.connected()) { mqtt.connect(); delay(500); }
 #endif
+  if (digitalRead(PIR_PIN) == HIGH) lastMotionMs = millis();
   if (millis() - last >= REPORT_MS) {
     last = millis();
     report();
   }
+#if !TRANSPORT_MQTT
+  static uint32_t lastPoll = 0;
+  if (WiFi.status() == WL_CONNECTED && (lastPoll == 0 || millis() - lastPoll >= COMMAND_POLL_MS)) {
+    lastPoll = millis();
+    pollCommand();
+  }
+#endif
+  driveRelay();
   delay(50);
 }
