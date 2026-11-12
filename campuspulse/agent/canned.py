@@ -19,10 +19,11 @@ FROM v_room_hourly WHERE {WEEK} AND max_co2_ppm >= 1000 AND occupied_frac > 0
 GROUP BY room_id, room_name ORDER BY hours_over_limit DESC"""},
     {"q": "Which classes use less than a third of their room's seats?",
      "keys": ["third", "seats", "under", "half empty", "too big"],
-     "sql": """SELECT module, room_id, capacity, ROUND(AVG(avg_people)) AS avg_people,
-       ROUND(AVG(avg_people) / ANY_VALUE(capacity), 2) AS seat_use
+     # Output names differ from input columns: BigQuery resolves HAVING names to SELECT aliases first.
+     "sql": """SELECT module, room_id, capacity, ROUND(AVG(avg_people)) AS typical_people,
+       ROUND(AVG(avg_people) / capacity, 2) AS seat_use
 FROM v_slot_attendance GROUP BY module, room_id, capacity
-HAVING AVG(avg_people) / ANY_VALUE(capacity) < 0.34 ORDER BY seat_use"""},
+HAVING AVG(avg_people) / capacity < 0.34 ORDER BY seat_use"""},
     {"q": "Which classes have more students than seats?",
      "keys": ["more students", "oversubscribed", "overcrowd", "than seats"],
      "sql": """SELECT module, room_id, capacity, MAX(expected) AS timetabled, MAX(max_people) AS peak_people

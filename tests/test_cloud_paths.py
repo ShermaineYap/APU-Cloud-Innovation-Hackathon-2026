@@ -151,3 +151,19 @@ def test_gemini_retries_temporary_errors(monkeypatch):
         raise AssertionError("a 400 must not be retried")
     except Busy as e:
         assert e.code == 400
+
+
+def test_test_traffic_stays_off_the_dashboard():
+    from fastapi.testclient import TestClient
+    from campuspulse import api
+
+    reading = {"device_id": "test-cloud-check", "room_id": "B-06-03", "occupied": True,
+               "co2_ppm": 650, "temp_c": 24.0, "rssi_dbm": -60}
+    with TestClient(api.app) as c:
+        assert c.post("/api/ingest", json=reading, headers={"X-Device-Key": "test-key"}).status_code == 200
+        api.cache.clear()
+        room = next(r for r in c.get("/api/overview").json()["rooms"] if r["room_id"] == "B-06-03")
+        assert room["device_id"] != "test-cloud-check"
+        nodes = c.get("/api/network").json()["nodes"]
+        assert all(n["device_id"] != "test-cloud-check" for n in nodes), [n["device_id"] for n in nodes]
+        assert ("B-06-03", "sensor") not in api.state["real_rooms"]

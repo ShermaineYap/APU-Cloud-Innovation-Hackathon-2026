@@ -198,7 +198,7 @@ def service_checks(url: str, key: str | None) -> None:
         @check("ingest a reading (via Pub/Sub when configured)")
         def _():
             r = http.post(f"{url}/api/ingest", headers={"X-Device-Key": key},
-                          json={"device_id": "cloud-check", "room_id": "B-08-05", "occupied": True,
+                          json={"device_id": "test-cloud-check", "room_id": "B-08-05", "occupied": True,
                                 "co2_ppm": 650, "temp_c": 24.0, "rssi_dbm": -60})
             assert r.status_code == 200, r.text[:200]
             return f"accepted via {r.json()['via']}"

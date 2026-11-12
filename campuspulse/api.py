@@ -23,7 +23,7 @@ from . import __version__, analytics, decisions, network, report, study
 from . import autopilot
 from .agent import ask, chart_caption, daily_brief, draft_notices, explain_plan, plan_constraints, suggestions
 from .campus import LIVE_ROOM, ROOM_BY_ID
-from .network import is_camera
+from .network import is_camera, is_test_device
 from .config import settings
 from .control import control
 from .weather import weather
@@ -216,6 +216,9 @@ def _publish(rows: list[dict]) -> int:
 def _accept(rows: list[dict]) -> int:
     n = _publish(rows) if settings.pubsub_topic else get_store().insert_readings(rows)
     cache.drop("overview")
+    rows = [r for r in rows if not is_test_device(r["device_id"])]  # test traffic never counts as live hardware
+    if not rows:
+        return n
     now = datetime.now(timezone.utc)
     state["last_real"] = now
     state["real_count"] += n
@@ -239,6 +242,15 @@ async def ingest(request: Request, x_device_key: str = Header(default="")):
     return {"accepted": n, "via": "pubsub" if settings.pubsub_topic else "direct"}
 
 
+def _normalise(r: dict) -> dict:
+    """Fill fields a Pub/Sub message may lack, so every stored reading is complete."""
+    room = ROOM_BY_ID[r["room_id"]]
+    return r | {"gateway_id": r.get("gateway_id") or room.gateway_id,
+                "packets_sent": r.get("packets_sent") if r.get("packets_sent") is not None else 1,
+                "packets_acked": r.get("packets_acked") if r.get("packets_acked") is not None else 1,
+                "simulated": bool(r.get("simulated", False))}
+
+
 @app.post("/api/pubsub/push")
 async def pubsub_push(request: Request, key: str = ""):
     """Pub/Sub push subscription target: decode and store.
@@ -254,7 +266,7 @@ async def pubsub_push(request: Request, key: str = ""):
         # Acknowledge malformed messages so Pub/Sub does not redeliver them forever.
         log.warning("dropping malformed Pub/Sub message: %s", e)
         return {"stored": 0}
-    rows = data if isinstance(data, list) else [data]
+    rows = [_normalise(r) for r in (data if isinstance(data, list) else [data]) if r.get("room_id") in ROOM_BY_ID]
     get_store().insert_readings(rows)
     cache.drop("overview")
     return {"stored": len(rows)}

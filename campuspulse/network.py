@@ -7,6 +7,7 @@ the sensor value is moving at all.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
 
 import pandas as pd
@@ -15,6 +16,16 @@ from .store import Store
 
 STALE_AFTER_MIN = 15
 CAMERA_PREFIX = "cam-"
+
+
+# Readings from these devices are test traffic (e.g. scripts/cloud_check.py): stored, but left out of
+# the floor plan, the trust panel and the live-node status.
+TEST_DEVICE_PREFIXES = ("test-", "cloud-check")
+NOT_TEST_SQL = " AND ".join(f"NOT STARTS_WITH(device_id, '{p}')" for p in TEST_DEVICE_PREFIXES)
+
+
+def is_test_device(device_id: str) -> bool:
+    return str(device_id).startswith(TEST_DEVICE_PREFIXES)
 
 
 def is_camera(device_id: str) -> bool:
@@ -37,7 +48,8 @@ class LinkHealth:
     issues: list[str]
 
     def as_dict(self) -> dict:
-        return asdict(self)
+        # JSON has no NaN: a blank field from the warehouse becomes null.
+        return {k: (None if isinstance(v, float) and math.isnan(v) else v) for k, v in asdict(self).items()}
 
 
 def _score(delivery: float, rssi: float | None, age_min: float, distinct: int) -> tuple[int, list[str]]:
@@ -64,6 +76,7 @@ def link_health(store: Store, hours: int = 24) -> list[LinkHealth]:
         WITH w AS (
           SELECT * FROM readings
           WHERE ts >= TIMESTAMP_SUB({latest}, INTERVAL {hours} HOUR)
+            AND {NOT_TEST_SQL}
         )
         SELECT device_id, ANY_VALUE(room_id) AS room_id, ANY_VALUE(gateway_id) AS gateway_id,
                LOGICAL_AND(simulated) AS simulated,

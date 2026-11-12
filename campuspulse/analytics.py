@@ -13,7 +13,7 @@ import pandas as pd
 
 from .campus import ROOM_BY_ID
 from .config import settings
-from .network import CAMERA_PREFIX, STALE_AFTER_MIN, link_health, room_confidence
+from .network import CAMERA_PREFIX, NOT_TEST_SQL, STALE_AFTER_MIN, link_health, room_confidence
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ def room_states(store: Store, at: pd.Timestamp | None = None) -> list[dict]:
     latest = store.query(f"""
         SELECT * FROM readings
         WHERE ts >= TIMESTAMP_SUB({anchor}, INTERVAL 2 HOUR) {upto}
-          AND NOT STARTS_WITH(device_id, '{CAMERA_PREFIX}')
+          AND NOT STARTS_WITH(device_id, '{CAMERA_PREFIX}') AND {NOT_TEST_SQL}
         QUALIFY ROW_NUMBER() OVER (PARTITION BY room_id ORDER BY ts DESC, simulated ASC) = 1
     """)
     # Edge cameras count heads; a fresh count overrides the sensor node's estimate.
