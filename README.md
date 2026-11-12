@@ -1,6 +1,6 @@
 # CampusPulse
 
-**CampusPulse senses every room, trusts the network, and tells facilities what to change tomorrow, with the evidence attached.**
+**CampusPulse plans APU's rooms and air-conditioning for the next teaching day, proves the saving, and switches the AC when Estates approves.**
 
 APU Cloud Innovation Hackathon 2026 · Track 3: Data-Driven Research & Intelligent Decision Making
 
@@ -18,7 +18,23 @@ University rooms are cooled on a fixed building schedule, not by who is in them.
 
 CampusPulse runs on **APU's real teaching week**: 20 real rooms (Auditoriums 1–6, Block B classrooms, Tech Labs) and their actual classes, taken from APU's public timetable feed. In the demo, **empty rooms take about 43% of the week's cooling energy**, and dozens of classes with one or two intakes are booked into 120–200-seat auditoriums.
 
-## What it does
+## Autopilot: the system makes the decision
+
+Press **Plan tomorrow** and CampusPulse decides, instead of listing tips:
+
+1. **Predict** each class's head count from the sensors (same class, past weeks) and the hourly outdoor temperature from the **real Kuala Lumpur forecast** (Open-Meteo).
+2. **Optimise** which room every class uses with a mixed-integer program (SciPy / HiGHS): least cooling energy, every class fits with spare seats, no double booking, labs stay labs, a cost for every move.
+3. **Schedule** each room's AC only around its classes, with a longer pre-cool on hotter mornings.
+4. **Check** CO₂ stays under the limit. Trusted, small, same-block changes apply **automatically**; risky ones (a block change, an untrusted sensor, a nearly full room) **wait for a person**.
+5. **Prove** it in a digital twin with the simulator's physics: today's setup vs AC schedule only vs the full plan, in kWh, RM, CO₂e and stale-air hours.
+6. **Act:** approval sends each room its AC mode over MQTT; Gemini drafts the student notices; everything is logged.
+7. **Learn:** the head-count forecast is checked against last week's measurements (typically within ±4 people).
+
+Estates sets goals in plain English (*"don't move Friday classes"*, *"comfort first"*); **Gemini turns them into solver constraints** by function calling. People set the goals, the solver decides, Gemini connects the two, and no figure comes from the language model.
+
+On the demo data a typical teaching day saves about **40% of cooling energy** and roughly halves stale-air class-hours.
+
+## Everything else it does
 
 1. **Morning brief.** Gemini writes a short brief from actions the decision engine has already costed: what to change, why now, the first step. It may use only the engine's numbers.
 2. **What to change.** Five detectors find after-hours cooling, schedule-driven cooling of empty rooms, oversized room bookings, stale air (CO₂ over 1000 ppm) and unreliable data. Every action carries its kWh and ringgit impact, a confidence score, a chart, the rows and the exact SQL behind it. Approve or dismiss, and the decision is logged to BigQuery.
@@ -31,6 +47,8 @@ CampusPulse runs on **APU's real teaching week**: 20 real rooms (Auditoriums 1�
 9. **Closed loop: approve, and the rooms obey.** Approving an air-conditioning change sends every room it covers its new AC mode (*follows occupancy* or *off after hours*) over MQTT on `campuspulse/<room>/command` (QoS 1, retained), or the node pulls it from `GET /api/rooms/<room>/command`. The ESP32 drives a relay on GPIO26; simulated rooms obey from their next reading, so the floor plan shows empty rooms going dark. Dismissing reverts it. Every command is listed under *Sent to the rooms*.
 10. **Carbon, not just ringgit.** Every saving is also shown in kg CO₂e (grid factor `CP_GRID_KG_CO2E_PER_KWH`, default 0.758 for Peninsular Malaysia), in the brief, the actions, What if and the Estates report.
 11. **Where can I study?** A student view of free rooms with no class booked for the next 30 minutes, ranked so rooms *already being cooled* come first: students fill cooling the campus is paying for anyway.
+13. **Real weather.** The simulator, the planner and the header use the real hourly temperature at APU from Open-Meteo (free, no key; cached, with a typical-day fallback offline). Cooling load rises on hot afternoons.
+14. **A virtual sensor node, no hardware needed.** `firmware/wokwi/` runs the node on the free Wokwi ESP32 simulator: DHT22, PIR, a CO₂ knob and an AC-relay LED, over real MQTT through a public broker, receiving the AC commands back. `edge/virtual_node.py` does the same from a terminal. See [docs/DEMO.md](docs/DEMO.md).
 12. **Demo clock.** Replay any hour of the last 7 days (day picker, time slider, ▶ Play the day), or open `/?at=2026-11-11T14:00`. Hours when the service was down are back-filled on start, so replay never hits a hole.
 
 ## Cloud, IoT and network, converged
@@ -139,6 +157,9 @@ tests/              29 tests: guard, engine finds planted problems, API, camera 
 | GET | `/api/actions/{id}/caption` | One-line chart caption |
 | GET | `/api/report.pdf` | One-page Estates report |
 | GET | `/api/overview?at=…` | Floor plan and study rooms replayed at a past local time |
+| POST | `/api/autopilot/plan` | Plan the next teaching day; body `{"instructions": "..."}` (plain-English goals) |
+| POST | `/api/autopilot/apply` | Carry out a plan: `{"plan_id": "...", "approve_review": false}` |
+| GET | `/api/autopilot/latest` | The last plan |
 | GET | `/api/commands` | Device commands sent for approved changes, and each room's AC mode |
 | GET | `/api/rooms/{id}/command` | HTTPS pull of the room's AC mode (header `X-Device-Key`) |
 

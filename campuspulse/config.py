@@ -62,6 +62,8 @@ class Settings:
     mqtt_user: str | None = field(default_factory=lambda: os.getenv("CP_MQTT_USER") or None)
     mqtt_pass: str | None = field(default_factory=lambda: os.getenv("CP_MQTT_PASS") or None)
     mqtt_tls: bool = field(default_factory=lambda: _bool("CP_MQTT_TLS", False))
+    # Topic prefix: <prefix>/<room_id>/telemetry and /command. Make it unique on a public broker.
+    mqtt_prefix: str = field(default_factory=lambda: os.getenv("CP_MQTT_PREFIX", "campuspulse"))
 
     ingest_key: str = field(default_factory=lambda: os.getenv("CP_INGEST_KEY", "dev-ingest-key"))
     live_simulator: bool = field(default_factory=lambda: _bool("CP_LIVE_SIM", True))

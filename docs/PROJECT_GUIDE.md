@@ -24,6 +24,10 @@ CampusPulse watches APU's teaching rooms, works out where energy and comfort are
 | Room drawer | Last 48 hours, tomorrow's forecast, unusual energy hours | `analytics.py` → `room_detail` |
 | Can we trust the data? | 0–100 confidence per sensor node from delivery, signal, freshness and stuck-sensor checks | `network.py` |
 | Edge camera | YOLO counts people on the device; only the number is sent | `edge/people_counter.py` |
+| Autopilot | Plan the next teaching day: forecast, MILP room assignment, weather-based AC schedule, comfort and trust checks, digital twin, apply | `autopilot.py`, `api.py` → `autopilot_plan` / `autopilot_apply` |
+| Goals in plain English | Gemini function calling turns goals into solver constraints; it also explains the plan and drafts notices | `agent/gemini.py` → `plan_constraints`, `explain_plan`, `draft_notices` |
+| Real weather | Hourly KL temperature (Open-Meteo) drives the simulator, the planner and the header | `weather.py` |
+| Virtual node | Wokwi ESP32 sketch and a Python stand-in on a public MQTT broker | `firmware/wokwi/`, `edge/virtual_node.py` |
 | Closed loop | Approve an AC change → each room gets its new AC mode over MQTT (or HTTPS pull); simulated rooms obey | `control.py`, `api.py` → `decide`, firmware relay on GPIO26 |
 | Carbon | kg CO₂e beside every kWh and ringgit figure | `config.py` → `grid_kg_co2e_per_kwh` |
 | Where can I study? | Free rooms for students, already-cooled rooms first | `study.py` → `free_rooms` |
@@ -220,6 +224,20 @@ Constants: `LIVE_ROOM` (default `B-08-05`), `STUDENTS_PER_INTAKE` (12), `BLOCK_N
 | `GET /` | `index` | The dashboard. |
 
 Internals: `Reading.to_row` validates and normalises a reading; `_accept` stores it (or publishes to Pub/Sub) and remembers which rooms have live hardware; `_live_loop` adds simulated readings every 30 s, skipping rooms where real hardware is reporting; `lifespan` sets up the store, clears stale data and seeds 28 days of history on first start; `Cache` keeps expensive results for a short time.
+
+### `campuspulse/autopilot.py`: plan the next teaching day
+| Function / class | What it does |
+| --- | --- |
+| `Constraints` | Goals the solver must respect: `no_moves`, `same_block`, `max_moves`, `headroom_pct`, `frozen_modules`, `frozen_rooms`, `frozen_days`, `comfort_first`. |
+| `parse_instructions_offline(text)` | Rule-based reader for typical goals, used without Gemini (or when it is slow). |
+| `History`, `_predict(slot)` | Median and 90th percentile of each class's measured peak head count. |
+| `_optimise(classes, c, profile)` | The mixed-integer program: one room per class, no overlaps (15-minute turnover), capacity with headroom, kind and block rules, CO₂ penalty, move cost. |
+| `_twin(classes, rooms, mode, profile)` | 5-minute energy and comfort for a day, with the simulator's physics. |
+| `plan(store, day, constraints)` | Runs it all and classifies every change as `auto` or `review`. |
+| `backtest(store)` | Forecasts last week's classes from the weeks before and scores the error. |
+
+### `campuspulse/weather.py`
+`Weather.outdoor_c(ts)` interpolates hourly Open-Meteo temperatures (31 days past, 3 days ahead) with a disk cache and a typical KL curve offline (`CP_WEATHER=off` forces it). `day_profile(date)` gives the 24 hourly values the planner uses.
 
 ### `campuspulse/control.py`: closing the loop
 | Function / class | What it does |

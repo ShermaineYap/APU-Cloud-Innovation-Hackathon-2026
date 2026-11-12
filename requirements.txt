@@ -13,3 +13,4 @@ pyarrow==26.0.1
 paho-mqtt==2.2.0
 httpx==0.28.1
 reportlab==5.1.0
+scipy==1.18.1

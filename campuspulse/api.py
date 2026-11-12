@@ -19,11 +19,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
 from . import __version__, analytics, decisions, network, report, study
-from .agent import ask, chart_caption, daily_brief, suggestions
+from . import autopilot
+from .agent import ask, chart_caption, daily_brief, draft_notices, explain_plan, plan_constraints, suggestions
 from .campus import LIVE_ROOM, ROOM_BY_ID
 from .network import is_camera
 from .config import settings
 from .control import control
+from .weather import weather
 from .simulator import Fleet
 from .store import get_store
 
@@ -89,6 +91,7 @@ def _live_loop(fleet: Fleet, stop: threading.Event):
 async def lifespan(app: FastAPI):
     store = get_store()
     store.setup()
+    weather.refresh()  # real KL weather before the simulator runs
     fleet = Fleet()
     fleet.policies = control.policies  # simulated rooms obey approved AC changes
     if store.reading_count() and store.stale_rooms():
@@ -247,6 +250,7 @@ def overview(at: str | None = None):
         "kpis": cache.get("kpis", 60, lambda: analytics.kpis(store)),
         "rooms": rooms,
         "study": study.free_rooms(rooms, moment),
+        "weather": cache.get("weather", 600, weather.now),
         "replay_at": replay.isoformat() if replay is not None else None,
         "replay_range": cache.get("replay_range", 300, lambda: analytics.replay_range(store)),
         "mode": _mode(),
@@ -292,6 +296,101 @@ def decide(action_id: str, body: Decision):
     })
     commands = control.apply(act, body.status, body.decided_by)
     return {"ok": True, "action_id": action_id, "status": body.status, "commands": commands}
+
+
+# Gemini helps Autopilot read goals and write words, but the plan never waits long for it.
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as _Timeout  # noqa: E402
+
+_gemini_pool = ThreadPoolExecutor(max_workers=4)
+GEMINI_WAIT_S = 10
+
+
+def _within(fn, *args, fallback):
+    fut = _gemini_pool.submit(fn, *args)
+    try:
+        return fut.result(timeout=GEMINI_WAIT_S)
+    except _Timeout:
+        log.warning("Gemini took over %ss; using the fallback", GEMINI_WAIT_S)
+        return fallback()
+
+
+def _goals(text: str):
+    from .agent.gemini import plan_constraints as read
+    return _within(read, text, fallback=lambda: (autopilot.parse_instructions_offline(text).as_dict(),
+                                                 "rule-based reader (Gemini error: 504 slow to answer)"))
+
+
+def _explain(p: dict) -> dict:
+    from .agent.gemini import _fallback_explain
+    return _within(explain_plan, p, fallback=lambda: _fallback_explain(p) | {"source": "template (Gemini error: 504 slow to answer)"})
+
+
+def _notices(moves: list[dict]) -> dict:
+    from .agent.gemini import _fallback_notice
+    return _within(draft_notices, moves, fallback=lambda: {
+        "notices": [{"id": m["id"], "text": _fallback_notice(m)} for m in moves],
+        "source": "template (Gemini error: 504 slow to answer)"})
+
+
+class PlanRequest(BaseModel):
+    instructions: str = Field(default="", max_length=500)
+    day: str | None = None  # YYYY-MM-DD; default: the next teaching day
+
+
+@app.post("/api/autopilot/plan")
+def autopilot_plan(body: PlanRequest):
+    """Plan the next teaching day: forecast, optimise rooms, schedule AC, check comfort, compare in the twin."""
+    constraints, reader = _goals(body.instructions)
+    day = None
+    if body.day:
+        try:
+            day = datetime.fromisoformat(body.day).date()
+        except ValueError:
+            raise HTTPException(422, "day must be YYYY-MM-DD")
+    p = autopilot.plan(get_store(), day=day, constraints=constraints)
+    if "error" in p:
+        raise HTTPException(422, p["error"])
+    p["instructions"] = body.instructions
+    p["constraints_read_by"] = reader
+    p["explanation"] = _explain(p)
+    state["last_plan"] = p["id"]
+    return p
+
+
+@app.get("/api/autopilot/latest")
+def autopilot_latest():
+    p = autopilot.get_plan(state.get("last_plan") or "")
+    return p or {}
+
+
+class ApplyRequest(BaseModel):
+    plan_id: str
+    approve_review: bool = False   # also apply the changes that were sent for a person's approval
+    decided_by: str = Field(default="Estates manager", max_length=80)
+
+
+@app.post("/api/autopilot/apply")
+def autopilot_apply(body: ApplyRequest):
+    """Carry out a plan: AC modes go to the rooms, moves are logged and notices drafted."""
+    p = autopilot.get_plan(body.plan_id)
+    if p is None:
+        raise HTTPException(404, "plan not found; plan again")
+    ok = lambda d: d == "auto" or body.approve_review  # noqa: E731
+    rooms = [r["room_id"] for r in p["ac_schedule"] if ok(r["decision"])]
+    moves = [m for m in p["moves"] if ok(m["decision"])]
+    _sync_control()
+    act = {"id": f"autopilot-{p['day']}", "kind": "occupancy_linked_ac", "rooms": rooms,
+           "title": f"Autopilot plan for {p['day_label']}"}
+    commands = control.apply(act, "approved", body.decided_by)
+    kwh = p["saving"]["kwh"]
+    get_store().insert_decision({
+        "decided_at": datetime.now(timezone.utc), "action_id": p["id"], "kind": "autopilot",
+        "title": act["title"] + f" ({len(rooms)} rooms, {len(moves)} moves)", "status": "approved",
+        "kwh_per_week": kwh, "rm_per_week": p["saving"]["rm"], "decided_by": body.decided_by,
+    })
+    held = [m for m in p["moves"] if not ok(m["decision"])]
+    return {"ok": True, "commands": commands, "rooms": rooms, "moves_applied": moves, "moves_held": len(held),
+            "notices": _notices(moves)}
 
 
 @app.get("/api/commands")

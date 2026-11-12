@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from campuspulse import api
 from campuspulse.campus import ROOM_BY_ID, TIMETABLE
 from campuspulse.config import settings
+from campuspulse.control import control
 from campuspulse.simulator import Fleet
 
 KEY = {"X-Device-Key": "test-key"}
@@ -15,8 +16,10 @@ def test_approve_sends_ac_commands_and_dismiss_reverts():
         acts = c.get("/api/actions").json()
         ac = next(a for a in acts if a["kind"] == "occupancy_linked_ac")
         assert ac["kg_co2e_per_week"] > 0
-        # Other tests may have approved it already; start from "dismissed".
+        # Other tests may have set AC modes already; start from a clean control plane.
         c.post(f"/api/actions/{ac['id']}/decide", json={"status": "dismissed"})
+        control.by_action.clear()
+        control.policies.clear()
         res =c.post(f"/api/actions/{ac['id']}/decide", json={"status": "approved"}).json()
         assert {cmd["room_id"] for cmd in res["commands"]} == set(ac["rooms"])
         assert all(cmd["ac_mode"] == "occupancy" and cmd["topic"].endswith("/command") for cmd in res["commands"])

@@ -4,8 +4,10 @@ Every row is labelled simulated=True. Only rows posted by the physical ESP32
 node carry simulated=False. The physics is deliberately simple but grounded:
 
   CO2   single-zone mass balance: dC/dt = people * G / V - ACH * (C - outdoor)
-  temp  first-order approach to a set point, plus body heat
-  power AC load * duty cycle + lighting + plug load
+  temp  first-order approach to a set point (23 °C cooled, else the real KL outdoor temperature), plus body heat
+  power AC load * duty cycle (higher on hot afternoons) + lighting + plug load
+
+Outdoor temperature is the real hourly weather at APU from Open-Meteo (weather.py).
 
 Classes follow APU's real timetable for the week (exact start and end times).
 What emerges from that timetable, not planted:
@@ -30,6 +32,7 @@ import numpy as np
 
 from .campus import ROOMS, Room, slots_for
 from .config import settings
+from .weather import weather
 
 OUTDOOR_CO2 = 420.0
 CO2_PER_PERSON_PPM_M3_H = 18_000.0  # 0.018 m3/h exhaled CO2, times 1e6 ppm
@@ -121,13 +124,16 @@ class Fleet:
         ach = 3.0 if ac else 0.6
         st.co2 += dt_h * (people * CO2_PER_PERSON_PPM_M3_H / vol - ach * (st.co2 - OUTDOOR_CO2))
         st.co2 = max(OUTDOOR_CO2 - 5, st.co2)
-        target = (23.0 if ac else 30.5) + 2.5 * people / room.capacity
+        outdoor = weather.outdoor_c(ts)
+        target = (23.0 if ac else outdoor + 1.0) + 2.5 * people / room.capacity
         st.temp += (1 - math.exp(-1.4 * dt_h)) * (target - st.temp)
 
         load = people / room.capacity
         watts = 60.0 + (room.capacity * 4.0 if (people or ac) else 0.0)
         if ac:
-            watts += room.ac_kw * 1000 * float(np.clip(0.55 + 0.4 * load + self.rng.normal(0, 0.03), 0.4, 1.0))
+            # Compressor duty rises with the heat outside: about 3.5 points per degree above 30 °C.
+            duty = 0.55 + 0.4 * load + 0.035 * (outdoor - 30.0) + self.rng.normal(0, 0.03)
+            watts += room.ac_kw * 1000 * float(np.clip(duty, 0.35, 1.0))
 
         co2 = st.co2 + self.rng.normal(0, 8)
         days_ago = (self.end - ts).total_seconds() / 86400

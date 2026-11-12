@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "author": "CampusPulse",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+    { "type": "wokwi-dht22", "id": "dht", "top": -105, "left": 180, "attrs": { "temperature": "26.5", "humidity": "62" } },
+    { "type": "wokwi-pir-motion-sensor", "id": "pir", "top": -110, "left": -150, "attrs": {} },
+    { "type": "wokwi-potentiometer", "id": "co2", "top": 170, "left": -170, "attrs": { "value": "1000" } },
+    { "type": "wokwi-led", "id": "ac", "top": 60, "left": 230, "attrs": { "color": "blue", "label": "AC relay" } },
+    { "type": "wokwi-resistor", "id": "r1", "top": 140, "left": 200, "rotate": 90, "attrs": { "value": "220" } },
+    { "type": "wokwi-led", "id": "link", "top": 60, "left": 300, "attrs": { "color": "green", "label": "MQTT" } },
+    { "type": "wokwi-resistor", "id": "r2", "top": 140, "left": 270, "rotate": 90, "attrs": { "value": "220" } }
+  ],
+  "connections": [
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+    [ "dht:VCC", "esp:3V3", "red", [] ],
+    [ "dht:GND", "esp:GND.2", "black", [] ],
+    [ "dht:SDA", "esp:15", "green", [] ],
+    [ "pir:VCC", "esp:5V", "red", [] ],
+    [ "pir:GND", "esp:GND.1", "black", [] ],
+    [ "pir:OUT", "esp:27", "orange", [] ],
+    [ "co2:VCC", "esp:3V3", "red", [] ],
+    [ "co2:GND", "esp:GND.1", "black", [] ],
+    [ "co2:SIG", "esp:34", "violet", [] ],
+    [ "ac:A", "esp:26", "blue", [] ],
+    [ "ac:C", "r1:1", "black", [] ],
+    [ "r1:2", "esp:GND.2", "black", [] ],
+    [ "link:A", "esp:2", "green", [] ],
+    [ "link:C", "r2:1", "black", [] ],
+    [ "r2:2", "esp:GND.2", "black", [] ]
+  ],
+  "dependencies": {}
+}

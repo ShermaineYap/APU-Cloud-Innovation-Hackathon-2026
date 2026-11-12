@@ -355,3 +355,147 @@ def ask(store: Store, question: str) -> dict:
 
 def suggestions() -> list[str]:
     return [c["q"] for c in CANNED]
+
+
+# --- Autopilot: plain-English goals -> solver constraints; plan explanation; notices --------
+
+PLAN_SYSTEM = """You turn a facilities manager's goals for tomorrow's room and air-conditioning plan
+into constraints for an optimisation solver. Call set_constraints exactly once.
+Rules: only set fields the manager asked for; module codes look like CT026 or ABUS003; room ids look like
+AUD-1, B-08-05, TL4-02. "Don't move anything" means no_moves. "Keep moves nearby / same block" means same_block.
+"Comfort first", "students first" or "cooler rooms" means comfort_first. In notes, list in a few words each
+what you understood, so the manager can check it."""
+
+EXPLAIN_SYSTEM = """You explain an optimised plan for tomorrow to a university facilities manager.
+You get the solver's results as JSON. Write JSON with "headline" (at most 14 words, lead with the saving)
+and "summary" (2-3 sentences: what changes, what is applied automatically, what needs their approval and why,
+and any comfort effect). Use only numbers present in the input, rounded as given. Plain words, no hype."""
+
+NOTICE_SYSTEM = """You write short room-change notices for students and lecturers at a university.
+For each move in the input, write one notice of at most 40 words: module, day, time, old room -> new room,
+and one friendly reason (a better-sized room, fresher air). Return JSON {"notices": [{"id": ..., "text": ...}]}.
+Use only facts from the input."""
+
+CONSTRAINT_FN = {
+    "name": "set_constraints",
+    "description": "Constraints for tomorrow's room and AC optimisation.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "no_moves": {"type": "boolean", "description": "Keep every class in its timetabled room."},
+            "same_block": {"type": "boolean", "description": "Moves must stay in the same building block."},
+            "max_moves": {"type": "integer", "description": "Upper limit on room moves."},
+            "headroom_pct": {"type": "integer", "description": "Spare seats to keep, percent (default 15)."},
+            "frozen_modules": {"type": "array", "items": {"type": "string"},
+                               "description": "Module codes or names that must not move."},
+            "frozen_rooms": {"type": "array", "items": {"type": "string"},
+                             "description": "Room ids whose classes must not move."},
+            "frozen_days": {"type": "array", "items": {"type": "string"},
+                            "description": "Weekdays (Mon, Tue, Wed, Thu, Fri) whose classes must not move."},
+            "comfort_first": {"type": "boolean", "description": "Prefer comfort: longer pre-cool, more spare seats."},
+            "notes": {"type": "array", "items": {"type": "string"}, "description": "What was understood."},
+        },
+    },
+}
+
+
+def plan_constraints(text: str) -> tuple[dict, str]:
+    """Plain-English goals -> constraint dict, and who read them."""
+    from ..autopilot import parse_instructions_offline
+    if not text or not text.strip():
+        return {}, "defaults"
+    if not settings.gemini_enabled:
+        return parse_instructions_offline(text).as_dict(), "rule-based reader (Gemini not configured)"
+    from google.genai import types
+    try:
+        resp = _client().models.generate_content(
+            model=settings.gemini_model, contents=text,
+            config=types.GenerateContentConfig(
+                system_instruction=PLAN_SYSTEM, temperature=0.0,
+                tools=[types.Tool(function_declarations=[types.FunctionDeclaration(**CONSTRAINT_FN)])],
+                tool_config=types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="ANY")),
+            ))
+        for part in resp.candidates[0].content.parts:
+            if part.function_call and part.function_call.name == "set_constraints":
+                args = dict(part.function_call.args or {})
+                for k in ("headroom_pct", "max_moves"):
+                    if k in args and args[k] is not None:
+                        args[k] = int(args[k])
+                for k in ("frozen_modules", "frozen_rooms", "frozen_days", "notes"):
+                    if k in args:
+                        args[k] = [str(x) for x in args[k]]
+                return args, f"Gemini ({settings.gemini_model})"
+        raise ValueError("no function call returned")
+    except Exception as e:
+        log.warning("Gemini constraints failed: %s", e)
+        return parse_instructions_offline(text).as_dict(), f"rule-based reader (Gemini error: {_why(e)})"
+
+
+def _plan_payload(p: dict) -> dict:
+    s = p["saving"]
+    return {"day": p["day_label"], "classes": p["classes"], "max_outdoor_c": p["weather"]["max_c"],
+            "energy_today_setup_kwh": round(p["baseline"]["kwh"]), "energy_plan_kwh": round(p["plan"]["kwh"]),
+            "saving_kwh": round(s["kwh"]), "saving_rm": round(s["rm"]), "saving_kg_co2e": round(s["kg_co2e"]),
+            "saving_pct": f"{round(s['pct'] * 100)}%", "from_ac_schedule_kwh": round(s["from_ac_schedule_kwh"]),
+            "from_room_moves_kwh": round(s["from_room_moves_kwh"]),
+            "stale_air_hours_before": p["baseline"]["co2_breach_hours"],
+            "stale_air_hours_after": p["plan"]["co2_breach_hours"],
+            "moves_auto": p["auto_moves"], "moves_need_approval": p["review_moves"],
+            "approval_reasons": sorted({r for m in p["moves"] if m["decision"] == "review" for r in m["reasons"]})[:4],
+            "constraints_understood": p["constraints"].get("notes", [])}
+
+
+def _fallback_explain(p: dict) -> dict:
+    s = p["saving"]
+    b, a = p["baseline"]["co2_breach_hours"], p["plan"]["co2_breach_hours"]
+    comfort = f" Stale-air class-hours fall from {b:g} to {a:g}." if a < b else ""
+    return {"headline": f"Plan saves {s['kwh']:,.0f} kWh (RM {s['rm']:,.0f}) on {p['day_label']}",
+            "summary": (f"AC runs only for booked classes with a weather-based pre-cool "
+                        f"({s['from_ac_schedule_kwh']:,.0f} kWh), and {len(p['moves'])} classes move to better-sized "
+                        f"rooms ({s['from_room_moves_kwh']:,.0f} kWh).{comfort} {p['auto_moves']} moves are safe to "
+                        f"apply automatically; {p['review_moves']} need your approval."),
+            "source": "template"}
+
+
+def explain_plan(p: dict) -> dict:
+    if not settings.gemini_enabled:
+        return _fallback_explain(p)
+    from google.genai import types
+    try:
+        resp = _client().models.generate_content(
+            model=settings.gemini_model, contents=json.dumps(_plan_payload(p)),
+            config=types.GenerateContentConfig(system_instruction=EXPLAIN_SYSTEM, temperature=0.2,
+                                               response_mime_type="application/json"))
+        out = _parse_json(resp.text)
+        return {"headline": str(out["headline"])[:140], "summary": str(out["summary"])[:700],
+                "source": f"Gemini ({settings.gemini_model})"}
+    except Exception as e:
+        log.warning("Gemini plan explanation failed: %s", e)
+        return _fallback_explain(p) | {"source": f"template (Gemini error: {_why(e)})"}
+
+
+def _fallback_notice(m: dict) -> str:
+    reason = "fresher air in a larger room" if m.get("co2_fix") else "a room sized for the class"
+    return (f"{m['module']} on {m['day']} {m['time']} moves from {m['from']} to {m['to']} "
+            f"({m['to_name']}), for {reason}. Same time, new room.")
+
+
+def draft_notices(moves: list[dict]) -> dict:
+    if not moves:
+        return {"notices": [], "source": "none"}
+    base = [{"id": m["id"], "text": _fallback_notice(m)} for m in moves]
+    if not settings.gemini_enabled:
+        return {"notices": base, "source": "template"}
+    from google.genai import types
+    facts = [{k: m[k] for k in ("id", "module", "day", "time", "from", "to", "to_name", "co2_fix")} for m in moves[:20]]
+    try:
+        resp = _client().models.generate_content(
+            model=settings.gemini_model, contents=json.dumps(facts),
+            config=types.GenerateContentConfig(system_instruction=NOTICE_SYSTEM, temperature=0.3,
+                                               response_mime_type="application/json"))
+        got = {n["id"]: str(n["text"])[:300] for n in _parse_json(resp.text).get("notices", []) if n.get("id")}
+        return {"notices": [{"id": b["id"], "text": got.get(b["id"], b["text"])} for b in base],
+                "source": f"Gemini ({settings.gemini_model})"}
+    except Exception as e:
+        log.warning("Gemini notices failed: %s", e)
+        return {"notices": base, "source": f"template (Gemini error: {_why(e)})"}

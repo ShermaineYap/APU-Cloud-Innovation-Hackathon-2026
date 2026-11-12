@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CampusPulse</title>
-  <meta name="description" content="Room sensing, network-aware confidence and Gemini decision briefs for campus facilities.">
+  <meta name="description" content="CampusPulse plans APU's rooms and air-conditioning for the next teaching day, and switches the AC when Estates approves.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
@@ -17,21 +17,39 @@
       <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="3" width="26" height="26" rx="3"/><path d="M8 18h4l3-8 3 12 3-6h3"/></svg>
       <span>CampusPulse</span>
     </div>
-    <div class="status" id="status" aria-live="polite">Connecting…</div>
-    <a class="ghost" id="report" href="/api/report.pdf" download>Estates report (PDF)</a>
-    <button class="ghost" id="refresh" type="button">Refresh brief</button>
+    <nav class="tabs" role="tablist" aria-label="Sections">
+      <button type="button" role="tab" data-tab="today" aria-selected="true">Today</button>
+      <button type="button" role="tab" data-tab="autopilot" aria-selected="false">Autopilot <span class="new">plan</span></button>
+      <button type="button" role="tab" data-tab="actions" aria-selected="false">Actions <span class="count" id="actions-count" hidden></span></button>
+      <button type="button" role="tab" data-tab="students" aria-selected="false">Students</button>
+      <button type="button" role="tab" data-tab="data" aria-selected="false">Data</button>
+    </nav>
+    <div class="bar-right">
+      <span class="pill" id="weather" title="Outdoor temperature at APU">KL –°C</span>
+      <span class="status" id="status" aria-live="polite">Connecting…</span>
+      <a class="ghost" id="report" href="/api/report.pdf" download>Report (PDF)</a>
+    </div>
   </header>
 
   <main>
-    <section class="lead" aria-labelledby="headline">
-      <p class="when" id="when">Morning brief</p>
-      <h1 id="headline">Reading the campus…</h1>
-      <p class="figures" id="figures"></p>
-      <p class="summary" id="brief-summary"></p>
-      <p class="note" id="brief-source"></p>
-    </section>
+    <!-- TODAY: what is happening, in one screen -->
+    <section class="tab-panel" data-panel="today" role="tabpanel" aria-labelledby="headline">
+      <div class="lead">
+        <p class="when" id="when">Morning brief</p>
+        <h1 id="headline">Reading the campus…</h1>
+        <div class="kpis" id="figures"></div>
+        <p class="summary" id="brief-summary"></p>
+        <p class="note"><span id="brief-source"></span> <button class="linkish" id="refresh" type="button">Refresh</button></p>
+      </div>
 
-    <section class="grid">
+      <div class="cta" id="cta">
+        <div>
+          <h2>Let CampusPulse plan tomorrow</h2>
+          <p class="hint">Autopilot forecasts every class, re-assigns rooms with an optimiser, schedules the AC from the weather forecast and checks comfort. You set the goals and approve.</p>
+        </div>
+        <button type="button" class="solid big" data-goto="autopilot">Open Autopilot →</button>
+      </div>
+
       <div class="plan-wrap" aria-labelledby="plan-title">
         <div class="section-head">
           <h2 id="plan-title">Rooms right now</h2>
@@ -56,51 +74,117 @@
           <div><dt><span class="swatch offline"></span></dt><dd>No recent data</dd></div>
         </dl>
       </div>
+    </section>
 
-      <div class="actions-wrap" aria-labelledby="actions-title">
-        <div class="section-head">
-          <h2 id="actions-title">What to change</h2>
-          <p class="hint">Ranked by ringgit, comfort and how far the data can be trusted.</p>
+    <!-- AUTOPILOT: the system decides tomorrow -->
+    <section class="tab-panel" data-panel="autopilot" role="tabpanel" aria-labelledby="ap-title" hidden>
+      <div class="section-head">
+        <h2 id="ap-title">Autopilot: plan the next teaching day</h2>
+      </div>
+      <ol class="steps" aria-label="How Autopilot decides">
+        <li><b>Predict</b> each class's head count and tomorrow's KL weather</li>
+        <li><b>Optimise</b> which room each class uses</li>
+        <li><b>Schedule</b> the AC only around classes</li>
+        <li><b>Check</b> air quality and data trust</li>
+        <li><b>Act</b>: rooms get their AC mode</li>
+      </ol>
+      <form id="ap-form" class="ask-form">
+        <label for="ap-goals" class="visually-hidden">Goals for tomorrow</label>
+        <input id="ap-goals" autocomplete="off" maxlength="500" placeholder="Optional goals in plain English, e.g. Don't move Friday classes, at most 6 moves">
+        <button type="submit" class="solid" id="ap-run">Plan tomorrow</button>
+      </form>
+      <div class="suggestions" id="ap-examples"></div>
+      <p class="hint" id="ap-status" aria-live="polite"></p>
+
+      <div id="ap-result" hidden>
+        <div class="ap-head">
+          <h3 id="ap-headline"></h3>
+          <p id="ap-summary"></p>
+          <p class="note" id="ap-source"></p>
         </div>
-        <div id="projection" class="projection" aria-live="polite"></div>
-        <ol id="actions" class="actions"></ol>
-        <div class="commands" aria-labelledby="cmd-title">
-          <h3 id="cmd-title">Sent to the rooms</h3>
-          <p class="hint">Approving an air-conditioning change sends each room its new AC mode over MQTT (QoS 1, retained), or the node pulls it over HTTPS. Simulated rooms obey it on their next reading.</p>
-          <ol id="commands" aria-live="polite"></ol>
+        <div class="kpis" id="ap-kpis"></div>
+
+        <div class="ap-grid">
+          <div class="card">
+            <h3>Where the saving comes from</h3>
+            <div class="proj-bars" id="ap-bars"></div>
+            <div class="chart-box"><canvas id="ap-chart" role="img" aria-label="Hourly energy tomorrow: today's setup against the plan, with outdoor temperature"></canvas></div>
+          </div>
+          <div class="card">
+            <h3>Room changes <span class="hint" id="ap-moves-count"></span></h3>
+            <ol class="moves" id="ap-moves"></ol>
+            <button type="button" class="linkish" id="ap-more" hidden>Show all</button>
+          </div>
         </div>
+
+        <details class="card fold">
+          <summary>AC schedule for each room</summary>
+          <div id="ap-schedule"></div>
+        </details>
+        <p class="trust" id="ap-trust"></p>
+
+        <div class="apply">
+          <button type="button" class="solid big" id="ap-apply-safe">Apply safe changes</button>
+          <button type="button" class="ghost" id="ap-apply-all">Approve everything</button>
+          <span class="hint" id="ap-apply-hint"></span>
+        </div>
+        <div id="ap-applied" class="card" hidden></div>
       </div>
     </section>
 
-    <section class="study" aria-labelledby="study-title">
+    <!-- ACTIONS: this week's findings, one by one -->
+    <section class="tab-panel" data-panel="actions" role="tabpanel" aria-labelledby="actions-title" hidden>
+      <div class="actions-layout">
+        <div class="actions-wrap">
+          <div class="section-head">
+            <h2 id="actions-title">What to change this week</h2>
+            <p class="hint">Ranked by ringgit, comfort and how far the data can be trusted. Every figure links to its SQL.</p>
+          </div>
+          <ol id="actions" class="actions"></ol>
+        </div>
+        <aside class="side">
+          <div id="projection" class="projection" aria-live="polite"></div>
+          <div class="commands" aria-labelledby="cmd-title">
+            <h3 id="cmd-title">Sent to the rooms</h3>
+            <p class="hint">Approved AC changes go to each room over MQTT (QoS 1, retained) or HTTPS. Simulated rooms obey from their next reading.</p>
+            <ol id="commands" aria-live="polite"></ol>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- STUDENTS -->
+    <section class="tab-panel study" data-panel="students" role="tabpanel" aria-labelledby="study-title" hidden>
       <div class="section-head">
         <h2 id="study-title">Where can I study?</h2>
-        <p class="hint" id="study-hint">For students: free rooms with no class booked for at least 30 minutes. Rooms already being cooled come first, so studying there uses cooling that would otherwise be wasted.</p>
+        <p class="hint" id="study-hint">Free rooms with no class for at least 30 minutes. Rooms already being cooled come first, so studying there uses cooling that would otherwise be wasted.</p>
       </div>
       <p class="study-msg" id="study-msg"></p>
       <ol id="study" class="study-list"></ol>
     </section>
 
-    <section class="ask" aria-labelledby="ask-title">
-      <div class="section-head">
-        <h2 id="ask-title">Ask the data</h2>
-        <p class="hint" id="ask-mode">Gemini writes the SQL, CampusPulse checks it is read-only, BigQuery runs it.</p>
+    <!-- DATA: explore and trust -->
+    <section class="tab-panel" data-panel="data" role="tabpanel" aria-labelledby="ask-title" hidden>
+      <div class="ask">
+        <div class="section-head">
+          <h2 id="ask-title">Ask the data</h2>
+          <p class="hint" id="ask-mode">Gemini writes the SQL, CampusPulse checks it is read-only, the warehouse runs it.</p>
+        </div>
+        <form id="ask-form" class="ask-form">
+          <label for="question" class="visually-hidden">Question</label>
+          <input id="question" name="question" autocomplete="off" placeholder="Which rooms were over 1000 ppm CO₂ while occupied this week?" required minlength="3">
+          <button type="submit" class="solid">Ask</button>
+        </form>
+        <div id="suggestions" class="suggestions"></div>
+        <div id="answer" class="answer" hidden></div>
       </div>
-      <form id="ask-form" class="ask-form">
-        <label for="question" class="visually-hidden">Question</label>
-        <input id="question" name="question" autocomplete="off" placeholder="Which rooms were over 1000 ppm CO₂ while occupied this week?" required minlength="3">
-        <button type="submit" class="solid">Ask</button>
-      </form>
-      <div id="suggestions" class="suggestions"></div>
-      <div id="answer" class="answer" hidden></div>
-    </section>
-
-    <section class="network" aria-labelledby="net-title">
-      <div class="section-head">
-        <h2 id="net-title">Can we trust the data?</h2>
-        <p class="hint">Every recommendation inherits the confidence of the sensors and links behind it.</p>
+      <div class="network">
+        <div class="section-head">
+          <h2 id="net-title">Can we trust the data?</h2>
+          <p class="hint">Every recommendation inherits the confidence of the sensors and links behind it.</p>
+        </div>
+        <div id="network"></div>
       </div>
-      <div id="network"></div>
     </section>
   </main>
 
@@ -115,8 +199,7 @@
 
   <footer class="foot">
     <p id="foot-mode"></p>
-    <p><a href="/api/report.pdf" download>Download this week's Estates report (PDF)</a></p>
-    <p>APU Cloud Innovation Hackathon 2026 · Track 3 · Data-driven research and intelligent decision making</p>
+    <p>APU Cloud Innovation Hackathon 2026 · Track 3: Data-Driven Research &amp; Intelligent Decision Making</p>
   </footer>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>

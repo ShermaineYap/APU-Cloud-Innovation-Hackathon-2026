@@ -17,7 +17,6 @@ import httpx
 import paho.mqtt.client as mqtt
 
 log = logging.getLogger("bridge")
-TOPIC = "campuspulse/+/telemetry"
 
 
 def main() -> None:
@@ -29,9 +28,12 @@ def main() -> None:
     p.add_argument("--tls", action="store_true", default=os.getenv("MQTT_TLS") == "1")
     p.add_argument("--api", default=os.getenv("CP_API", "http://localhost:8080"))
     p.add_argument("--key", default=os.getenv("CP_INGEST_KEY", "dev-ingest-key"))
+    p.add_argument("--prefix", default=os.getenv("CP_MQTT_PREFIX", "campuspulse"),
+                   help="topic prefix; use a unique one on a public broker")
     args = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
+    TOPIC = f"{args.prefix}/+/telemetry"
     http = httpx.Client(base_url=args.api, headers={"X-Device-Key": args.key}, timeout=10)
 
     def on_connect(client, userdata, flags, reason_code, properties=None):
@@ -47,7 +49,7 @@ def main() -> None:
         except Exception as e:
             log.warning("dropped message on %s: %s", msg.topic, e)
 
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="campuspulse-bridge")
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"campuspulse-bridge-{os.getpid()}")
     if args.username:
         client.username_pw_set(args.username, args.password)
     if args.tls:

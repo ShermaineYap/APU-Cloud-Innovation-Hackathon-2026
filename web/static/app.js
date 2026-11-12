@@ -54,16 +54,29 @@ function renderStatus(m) {
     : "Offline mode: tested questions only. Add a Gemini key to ask anything.";
 }
 
+// "template (Gemini error: 503 UNAVAILABLE: long text)" -> "the template (Gemini busy, 503)"
+function shortSource(src) {
+  const m = String(src || "").match(/Gemini error: (\d{3})/);
+  if (m) return `the template, from the engine's numbers (Gemini unavailable just now, ${m[1]})`;
+  return String(src || "template").replace(/ \(Gemini not configured\)/, " (Gemini not configured)");
+}
+
+function kpiTiles(items) {
+  return items.map(([v, label, cls]) => `<div class="kpi ${cls || ""}"><b>${v}</b><span>${esc(label)}</span></div>`).join("");
+}
+
 function renderLead(brief, kpis) {
   const now = new Date();
   $("#when").textContent = `Morning brief for ${now.toLocaleDateString("en-MY", { weekday: "long", day: "numeric", month: "long" })}`;
   $("#headline").textContent = brief.headline;
-  $("#figures").innerHTML =
-    `In the ${esc(kpis.window)}, <b>${fmt(kpis.wasted_kwh)} kWh</b> (about <b>RM ${fmt(kpis.wasted_rm)}</b> and <b>${fmt((kpis.wasted_kg_co2e || 0) / 1000, 1)} t CO₂e</b>) went to cooling empty rooms, ` +
-    `<b>${fmt(kpis.stale_air_hours)}</b> occupied room-hours had stale air, and booked rooms were <b>${fmt(kpis.avg_utilisation * 100)}%</b> full on average. ` +
-    `Fleet data confidence is <b>${fmt(kpis.fleet_confidence)}/100</b>.`;
+  $("#figures").innerHTML = kpiTiles([
+    [`RM ${fmt(kpis.wasted_rm)}`, "spent cooling empty rooms, last 7 days"],
+    [`${fmt(kpis.wasted_share * 100)}%`, "of all cooling went to empty rooms"],
+    [`${fmt((kpis.wasted_kg_co2e || 0) / 1000, 1)} t`, "CO₂e from that cooling"],
+    [`${fmt(kpis.stale_air_hours)} h`, "of classes with stale air (CO₂ over limit)"],
+  ]);
   $("#brief-summary").textContent = brief.summary || "";
-  $("#brief-source").textContent = `Brief written by ${brief.source}.`;
+  $("#brief-source").textContent = `Brief written by ${shortSource(brief.source)}.`;
 }
 
 /* ---------- floor plan ---------- */
@@ -123,6 +136,9 @@ function renderActions(actions, brief) {
     renderActions(lastBrief.actions, lastBrief.brief);
   }));
   renderProjection(actions);
+  const pending = ordered.filter((a) => !decided.has(a.id)).length;
+  $("#actions-count").hidden = !pending;
+  $("#actions-count").textContent = pending;
 }
 
 /* What if: the week recalculated with the selected and approved changes in place. */
@@ -244,6 +260,10 @@ async function decide(id, status, btn) {
 
 async function loadCommands() {
   const d = await api("/api/commands");
+  clearTimeout(loadCommands.timer);
+  if (d.commands.some((c) => (c.delivered || "").startsWith("sending"))) {
+    loadCommands.timer = setTimeout(() => loadCommands().catch(() => {}), 3000);
+  }
   const list = $("#commands");
   if (!d.commands.length) {
     list.innerHTML = `<li class="empty">Nothing sent yet. Approve an air-conditioning change to send its rooms a new AC mode.</li>`;
@@ -411,6 +431,173 @@ async function loadNetwork() {
       : "No gateway outages in the last 7 days."} Showing the ${nodes.length} least trusted of ${n.nodes.length} nodes.</p>`;
 }
 
+/* ---------- tabs ---------- */
+const TABS = ["today", "autopilot", "actions", "students", "data"];
+function showTab(name, push = true) {
+  if (!TABS.includes(name)) name = "today";
+  document.querySelectorAll("[role=tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
+  document.querySelectorAll(".tab-panel").forEach((p) => (p.hidden = p.dataset.panel !== name));
+  if (push) history.replaceState(null, "", `${location.pathname}${location.search}#${name}`);
+  if (name === "autopilot" && !apPlan && !apBusy) loadLatestPlan();
+  window.scrollTo({ top: 0 });
+}
+document.querySelectorAll("[role=tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+document.querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.goto)));
+document.querySelector(".tabs").addEventListener("keydown", (e) => {
+  if (!["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+  const tabs = [...document.querySelectorAll("[role=tab]")];
+  const i = tabs.indexOf(document.activeElement);
+  const next = tabs[(i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+  next.focus();
+  showTab(next.dataset.tab);
+});
+
+/* ---------- autopilot ---------- */
+let apPlan = null, apBusy = false, apShowAll = false;
+const AP_EXAMPLES = ["Don't move Friday classes", "Comfort first, students said rooms are stuffy", "Keep moves in the same block, at most 6", "Leave the Tech Lab classes where they are"];
+$("#ap-examples").innerHTML = AP_EXAMPLES.map((q) => `<button type="button" class="chip-btn">${esc(q)}</button>`).join("");
+$("#ap-examples").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { $("#ap-goals").value = b.textContent; runPlan(); }));
+$("#ap-form").addEventListener("submit", (e) => { e.preventDefault(); runPlan(); });
+
+async function loadLatestPlan() {
+  try {
+    const p = await api("/api/autopilot/latest");
+    if (p && p.id) renderPlanResult(p);
+  } catch { /* nothing planned yet */ }
+}
+
+async function runPlan() {
+  if (apBusy) return;
+  apBusy = true;
+  const btn = $("#ap-run");
+  btn.disabled = true;
+  btn.textContent = "Planning…";
+  $("#ap-status").textContent = "Forecasting classes, reading the weather forecast, solving the room assignment…";
+  try {
+    const p = await api("/api/autopilot/plan", { method: "POST", body: JSON.stringify({ instructions: $("#ap-goals").value.trim() }) });
+    $("#ap-status").textContent = "";
+    apShowAll = false;
+    renderPlanResult(p);
+  } catch (e) {
+    $("#ap-status").textContent = `Could not plan: ${e.message}`;
+  } finally {
+    apBusy = false;
+    btn.disabled = false;
+    btn.textContent = "Plan tomorrow";
+  }
+}
+
+function renderPlanResult(p) {
+  apPlan = p;
+  $("#ap-result").hidden = false;
+  $("#ap-applied").hidden = true;
+  const s = p.saving, ex = p.explanation || {};
+  $("#ap-headline").textContent = ex.headline || `Plan for ${p.day_label}`;
+  $("#ap-summary").textContent = ex.summary || "";
+  const goals = (p.constraints.notes || []).filter(Boolean);
+  $("#ap-source").textContent = `For ${p.day_label}. ` + (goals.length ? `Goals understood: ${goals.join("; ")} (read by ${shortSource(p.constraints_read_by)}). ` : "") +
+    `Written by ${shortSource(ex.source)}; every figure comes from the solver and the twin.`;
+  $("#ap-kpis").innerHTML = kpiTiles([
+    [`${fmt(s.kwh)} kWh`, `saved on ${p.day_label.split(" ")[0]} (${fmt(s.pct * 100)}% of today's setup)`, "good"],
+    [`RM ${fmt(s.rm)}`, `a day; about RM ${fmt(s.rm * 5 * 14)} over a 14-week semester`],
+    [`${fmt(s.kg_co2e)} kg`, "CO₂e avoided"],
+    [`${fmt(p.baseline.co2_breach_hours)} → ${fmt(p.plan.co2_breach_hours)} h`, "class-hours with stale air"],
+  ]);
+  const max = Math.max(p.baseline.kwh, 1);
+  const bar = (label, v, cls) => `<span class="lbl">${label}</span><span class="track"><span class="meter ${cls}" style="width:${(v / max) * 100}%"></span></span><span class="val">${fmt(v)} kWh</span>`;
+  $("#ap-bars").innerHTML = bar("Today's setup (AC on 07:30–21:00)", p.baseline.kwh, "now") +
+    bar("+ AC only around classes", p.ac_only.kwh, "mid") + bar("+ classes in right-sized rooms", p.plan.kwh, "after");
+  drawPlanChart(p);
+  renderMoves();
+  $("#ap-schedule").innerHTML = `<table class="rows"><thead><tr><th>Room</th><th>AC on</th><th class="num">Hours (was)</th><th>Applied</th></tr></thead><tbody>${
+    p.ac_schedule.map((r) => `<tr><td>${esc(r.room_id)}</td><td>${r.windows.length ? esc(r.windows.join(", ")) : "off all day"}</td>
+      <td class="num">${fmt(r.hours_on, 1)} (${fmt(r.hours_before, 1)})</td>
+      <td>${r.decision === "auto" ? `<span class="badge auto">auto</span>` : `<span class="badge review" title="Data confidence ${r.confidence}/100">needs you</span>`}</td></tr>`).join("")
+  }</tbody></table>`;
+  const acc = p.accuracy || {};
+  $("#ap-trust").innerHTML = [
+    acc.classes ? `<span><b>Forecast checked:</b> last week's ${fmt(acc.classes)} classes predicted within ±${fmt(acc.mean_abs_error_people, 1)} people on average; ${fmt(acc.within_tolerance_pct * 100)}% within tolerance.</span>` : "",
+    `<span><b>Solver:</b> ${esc(p.solver.solver)}, ${esc(p.solver.status.replace(/^.*\((.*)\)$/, "$1"))} in ${fmt(p.solver.ms)} ms over ${fmt(p.solver.variables)} choices.</span>`,
+    `<span><b>Weather:</b> up to ${fmt(p.weather.max_c, 1)}°C in teaching hours (${esc(p.weather.source)}); hotter mornings get a longer pre-cool.</span>`,
+  ].filter(Boolean).join("");
+  const autoRooms = p.ac_schedule.filter((r) => r.decision === "auto").length;
+  $("#ap-apply-safe").textContent = `Apply safe changes (${autoRooms} rooms, ${p.auto_moves} moves)`;
+  $("#ap-apply-all").textContent = p.review_moves ? `Approve all, incl. ${p.review_moves} for review` : "Approve all";
+  $("#ap-apply-hint").textContent = "Safe = trusted sensors, same block, room not too full. The rest waits for you.";
+}
+
+function renderMoves() {
+  const p = apPlan, list = $("#ap-moves");
+  $("#ap-moves-count").textContent = p.moves.length ? `${p.auto_moves} automatic · ${p.review_moves} need you` : "";
+  if (!p.moves.length) {
+    list.innerHTML = `<li class="empty">No room changes: ${p.constraints.no_moves ? "you asked to keep every class where it is" : "every class is already in a sensible room"}. The saving comes from the AC schedule.</li>`;
+    $("#ap-more").hidden = true;
+    return;
+  }
+  const shown = apShowAll ? p.moves : p.moves.slice(0, 6);
+  list.innerHTML = shown.map((m) => `<li class="${m.decision}">
+      <div class="mv-top"><b>${esc(m.module)}</b><span class="badge ${m.decision}">${m.decision === "auto" ? "auto" : "needs you"}</span></div>
+      <div class="mv-route">${esc(m.time)} · ${esc(m.from)} <span aria-hidden="true">→</span><span class="visually-hidden">to</span> <b>${esc(m.to)}</b>
+        ${m.kwh_saved > 0.5 ? `<span class="save">−${fmt(m.kwh_saved, 1)} kWh</span>` : ""}${m.co2_fix ? `<span class="fix">fresher air</span>` : ""}</div>
+      <div class="hint">${esc(m.why)}${m.reasons.length ? `. Needs you: ${esc(m.reasons.join(", "))}` : ""}</div>
+    </li>`).join("");
+  $("#ap-more").hidden = p.moves.length <= 6;
+  $("#ap-more").textContent = apShowAll ? "Show fewer" : `Show all ${p.moves.length}`;
+}
+$("#ap-more").addEventListener("click", () => { apShowAll = !apShowAll; renderMoves(); });
+
+function drawPlanChart(p) {
+  const hours = [...Array(24).keys()].slice(6, 22);
+  chart($("#ap-chart"), {
+    data: {
+      labels: hours.map((h) => `${String(h).padStart(2, "0")}:00`),
+      datasets: [
+        { type: "bar", label: "Today's setup (kWh)", data: hours.map((h) => p.baseline.hourly_kwh[h]), backgroundColor: "rgba(59,110,168,.35)", borderRadius: 2, yAxisID: "y" },
+        { type: "bar", label: "Plan (kWh)", data: hours.map((h) => p.plan.hourly_kwh[h]), backgroundColor: TEAL, borderRadius: 2, yAxisID: "y" },
+        { type: "line", label: "Outdoor °C", data: hours.map((h) => p.weather.hourly_c[h]), borderColor: AMBER, pointRadius: 0, borderWidth: 2, tension: 0.3, yAxisID: "t" },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: true, position: "bottom", labels: { boxWidth: 12 } } },
+      scales: {
+        x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true } },
+        y: { beginAtZero: true, title: { display: true, text: "kWh" } },
+        t: { position: "right", grid: { display: false }, title: { display: true, text: "°C" }, suggestedMin: 22, suggestedMax: 34 },
+      },
+    },
+  });
+}
+
+async function applyPlan(all) {
+  if (!apPlan) return;
+  const btns = [$("#ap-apply-safe"), $("#ap-apply-all")];
+  btns.forEach((b) => (b.disabled = true));
+  try {
+    const r = await api("/api/autopilot/apply", { method: "POST", body: JSON.stringify({ plan_id: apPlan.id, approve_review: all }) });
+    const box = $("#ap-applied");
+    box.hidden = false;
+    box.innerHTML = `<h3>Done. ${r.rooms.length} rooms switched to AC by occupancy; ${r.moves_applied.length} room changes approved${r.moves_held ? `, ${r.moves_held} held for you` : ""}.</h3>
+      <p class="hint">${r.commands.length ? `${r.commands.length} AC commands sent (see Actions → Sent to the rooms).` : "Those rooms already had this AC mode."} Logged to the decision table.</p>
+      ${r.notices.notices.length ? `<h4>Notices to send <span class="hint">(${esc(r.notices.source)})</span></h4>
+        <ol class="notices">${r.notices.notices.map((n) => `<li>${esc(n.text)}</li>`).join("")}</ol>
+        <button type="button" class="ghost" id="copy-notices">Copy notices</button>` : ""}`;
+    $("#copy-notices")?.addEventListener("click", () => {
+      navigator.clipboard?.writeText(r.notices.notices.map((n) => n.text).join("\n\n")).then(() => toast("Notices copied."), () => toast("Copy failed; select the text instead."));
+    });
+    toast(`Plan applied: ${r.commands.length} AC commands sent.`);
+    loadCommands().catch(() => {});
+    loadOverview().catch(() => {});
+    box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (e) {
+    toast(`Could not apply the plan: ${e.message}`);
+  } finally {
+    btns.forEach((b) => (b.disabled = false));
+  }
+}
+$("#ap-apply-safe").addEventListener("click", () => applyPlan(false));
+$("#ap-apply-all").addEventListener("click", () => applyPlan(true));
+
 /* ---------- boot ---------- */
 let lastBrief = null;
 
@@ -458,6 +645,9 @@ function renderReplayUi() {
   $("#replay-live").setAttribute("aria-pressed", String(!on));
   $("#replay-time").textContent = hhmm(Number($("#replay-hour").value));
   $("#replay-play").textContent = playTimer ? "\u275A\u275A Pause" : "\u25B6 Play the day";
+  $("#study-hint").textContent = on
+    ? `Replaying ${replayLabel()}. Free rooms with no class for at least 30 minutes; already-cooled rooms first.`
+    : "Free rooms with no class for at least 30 minutes. Rooms already being cooled come first, so studying there uses cooling that would otherwise be wasted.";
   if (on) {
     $("#plan-title").textContent = `Rooms on ${replayLabel()}`;
     $("#plan-hint").textContent = "Replaying recorded readings. Press Live to return to now.";
@@ -504,7 +694,15 @@ $("#quiet-replay").addEventListener("click", () => startPlay());
 
 function renderStudy(st) {
   if (!st) return;
-  $("#study-msg").textContent = st.message;
+  $("#study-msg").innerHTML = esc(st.message) + (!st.open
+    ? ` <button type="button" class="linkish" id="study-demo">See it at 2 pm on a teaching day</button>` : "");
+  $("#study-demo")?.addEventListener("click", () => {
+    const sel = $("#replay-day");
+    const weekday = [...sel.options].find((o) => /^(Mon|Tue|Wed|Thu|Fri)/.test(o.textContent));
+    if (weekday) sel.value = weekday.value;
+    $("#replay-hour").value = 14;
+    goReplay(replayValue()).catch((e) => toast(e.message));
+  });
   $("#study").innerHTML = st.rooms.map((r) => `<li class="study-room${r.cooled ? " cooled" : ""}">
       <button type="button" data-id="${esc(r.room_id)}" aria-label="${esc(`${r.room_id}, free until ${r.free_until}, ${r.reasons.join(", ")}`)}">
         <span class="code">${esc(r.room_id)}</span>
@@ -518,6 +716,10 @@ function renderStudy(st) {
 
 function applyOverview(o) {
   mode = o.mode;
+  if (o.weather) {
+    $("#weather").textContent = `KL ${fmt(o.weather.temp_c, 0)}°C`;
+    $("#weather").title = `Outdoor temperature at APU now (${o.weather.source})`;
+  }
   renderStudy(o.study);
   setupReplayDays(o.replay_range);
   if (replayAt) renderReplayUi();
@@ -577,6 +779,8 @@ async function restoreDecisions() {
     $("#replay-hour").value = Number(m[2]) + Number(m[3]) / 60;
   }
 }
+
+showTab(location.hash.slice(1) || "today", false);
 
 restoreDecisions().then(() => loadBrief()).catch((e) => { $("#headline").textContent = "CampusPulse could not reach its data service."; $("#figures").textContent = e.message; });
 loadSuggestions().catch(() => {});

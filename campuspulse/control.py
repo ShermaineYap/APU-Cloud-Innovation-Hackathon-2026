@@ -34,7 +34,7 @@ PRECOOL_MIN = 60
 
 
 def topic(room_id: str) -> str:
-    return f"campuspulse/{room_id}/command"
+    return f"{settings.mqtt_prefix}/{room_id}/command"
 
 
 class ControlPlane:
@@ -76,8 +76,7 @@ class ControlPlane:
                              if before.get(r, "schedule") != self.policies.get(r, "schedule"))
             cmds = [self._command(r, self.policies.get(r, "schedule"), action, decided_by) for r in changed]
             self.log = (cmds[::-1] + self.log)[:100]
-        for c in cmds:
-            self._send(c)
+        self._send(cmds)
         return cmds
 
     def sync(self, actions: list[dict], status: dict[str, str]) -> None:
@@ -106,26 +105,39 @@ class ControlPlane:
                 "action_title": action["title"], "decided_by": decided_by, "topic": topic(room_id),
                 "transport": "mqtt" if settings.mqtt_host else "https-pull", "delivered": None}
 
-    def _send(self, cmd: dict) -> None:
+    def _send(self, cmds: list[dict]) -> None:
         from .campus import LIVE_ROOM
-        if not settings.mqtt_host:
-            cmd["delivered"] = ("queued; the sensor node picks it up on its next HTTPS poll" if cmd["room_id"] == LIVE_ROOM
-                                else "simulated room: obeys it from its next reading")
+        if not cmds:
             return
-        threading.Thread(target=self._publish, args=(cmd,), daemon=True).start()
+        if not settings.mqtt_host:
+            for cmd in cmds:
+                cmd["delivered"] = ("queued; the sensor node picks it up on its next HTTPS poll"
+                                    if cmd["room_id"] == LIVE_ROOM else "simulated room: obeys it from its next reading")
+            return
+        for cmd in cmds:
+            cmd["delivered"] = "sending…"
+        threading.Thread(target=self._publish, args=(cmds,), daemon=True).start()
 
-    def _publish(self, cmd: dict) -> None:
-        payload = json.dumps({k: cmd[k] for k in ("room_id", "ac_mode", "precool_min", "action_id", "issued_at")})
+    def _publish(self, cmds: list[dict]) -> None:
+        """All of one decision's commands over one connection, with its own client id
+        (two connections with the same id knock each other off the broker)."""
+        msgs = [{"topic": c["topic"], "qos": 1, "retain": True,
+                 "payload": json.dumps({k: c[k] for k in ("room_id", "ac_mode", "precool_min", "action_id", "issued_at")})}
+                for c in cmds]
         try:
+            import uuid
+
             import paho.mqtt.publish as publish
             auth = {"username": settings.mqtt_user, "password": settings.mqtt_pass} if settings.mqtt_user else None
-            publish.single(cmd["topic"], payload, qos=1, retain=True, hostname=settings.mqtt_host,
-                           port=settings.mqtt_port, auth=auth, client_id="campuspulse-control",
-                           tls={} if settings.mqtt_tls else None, keepalive=10)
-            cmd["delivered"] = "broker acknowledged (QoS 1)"
+            publish.multiple(msgs, hostname=settings.mqtt_host, port=settings.mqtt_port, auth=auth,
+                             client_id=f"campuspulse-control-{uuid.uuid4().hex[:8]}",
+                             tls={} if settings.mqtt_tls else None, keepalive=15)
+            for c in cmds:
+                c["delivered"] = "broker acknowledged (MQTT QoS 1, retained)"
         except Exception as e:  # the decision stands; the node picks it up by HTTPS pull instead
-            log.warning("MQTT command to %s failed: %s", cmd["topic"], e)
-            cmd["delivered"] = f"broker unreachable; node can pull it over HTTPS ({type(e).__name__})"
+            log.warning("MQTT commands failed: %s", e)
+            for c in cmds:
+                c["delivered"] = f"broker unreachable; the node can pull it over HTTPS ({type(e).__name__})"
 
 
 control = ControlPlane()
