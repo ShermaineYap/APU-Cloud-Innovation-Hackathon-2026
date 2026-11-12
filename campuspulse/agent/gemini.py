@@ -425,7 +425,7 @@ def plan_constraints(text: str) -> tuple[dict, str]:
         return parse_instructions_offline(text).as_dict(), "rule-based reader (Gemini not configured)"
     from google.genai import types
     try:
-        resp = _client().models.generate_content(
+        resp = _generate(_client(), retries=2,
             model=settings.gemini_model, contents=text,
             config=types.GenerateContentConfig(
                 system_instruction=PLAN_SYSTEM, temperature=0.0,
@@ -479,7 +479,7 @@ def explain_plan(p: dict) -> dict:
         return _fallback_explain(p)
     from google.genai import types
     try:
-        resp = _client().models.generate_content(
+        resp = _generate(_client(), retries=2,
             model=settings.gemini_model, contents=json.dumps(_plan_payload(p)),
             config=types.GenerateContentConfig(system_instruction=EXPLAIN_SYSTEM, temperature=0.2,
                                                response_mime_type="application/json"))
@@ -506,7 +506,7 @@ def draft_notices(moves: list[dict]) -> dict:
     from google.genai import types
     facts = [{k: m[k] for k in ("id", "module", "day", "time", "from", "to", "to_name", "co2_fix")} for m in moves[:20]]
     try:
-        resp = _client().models.generate_content(
+        resp = _generate(_client(), retries=2,
             model=settings.gemini_model, contents=json.dumps(facts),
             config=types.GenerateContentConfig(system_instruction=NOTICE_SYSTEM, temperature=0.3,
                                                response_mime_type="application/json"))
