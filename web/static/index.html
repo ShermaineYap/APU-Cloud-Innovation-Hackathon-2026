@@ -51,6 +51,21 @@
         <button type="button" class="solid big" data-goto="autopilot">Open Autopilot →</button>
       </div>
 
+      <div class="source-card" id="source-card" aria-labelledby="source-title">
+        <div class="source-head">
+          <div>
+            <h2 id="source-title">Real data in <span id="source-room">B-08-05</span></h2>
+            <p class="hint">Choose where this room's readings come from. The other 19 rooms stay simulated and labelled.</p>
+          </div>
+          <div class="seg" role="radiogroup" aria-label="Data source">
+            <button type="button" role="radio" data-source="esp32" aria-checked="false">ESP32 + DHT22 sensor</button>
+            <button type="button" role="radio" data-source="replay" aria-checked="false">Real dataset replay</button>
+            <button type="button" role="radio" data-source="simulation" aria-checked="true">Simulated</button>
+          </div>
+        </div>
+        <div class="source-body" id="source-body" aria-live="polite"></div>
+      </div>
+
       <div class="plan-wrap" aria-labelledby="plan-title">
         <div class="section-head">
           <h2 id="plan-title">Rooms right now</h2>

@@ -392,7 +392,11 @@ into constraints for an optimisation solver. Call set_constraints exactly once.
 Rules: only set fields the manager asked for; module codes look like CT026 or ABUS003; room ids look like
 AUD-1, B-08-05, TL4-02. "Don't move anything" means no_moves. "Keep moves nearby / same block" means same_block.
 "Comfort first", "students first" or "cooler rooms" means comfort_first. In notes, list in a few words each
-what you understood, so the manager can check it."""
+what you understood, so the manager can check it.
+Naming a room, module or problem is not a limit: freeze rooms, modules or days only when the manager says their
+classes must not move ("leave AUD-2 alone", "don't touch Friday"). A question such as "why is Auditorium 2
+wasting energy?" sets nothing. If the text holds no goal or limit, set no fields except
+notes: ["no specific goals: default plan"]."""
 
 EXPLAIN_SYSTEM = """You explain an optimised plan for tomorrow to a university facilities manager.
 You get the solver's results as JSON. Write JSON with "headline" (at most 14 words, lead with the saving)

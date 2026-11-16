@@ -137,8 +137,8 @@ def integrations(request: Request):
     public = base.startswith("https://")
     items = [
         {"id": "gemini", "name": "Gemini", "state": "on" if gemini else "off",
-         "detail": f"{settings.gemini_model} via {gemini}: six roles (goal reader, SQL agent, brief, plan "
-                   "explainer, notices, chart captions)" if gemini else "No key or Vertex project set: templates "
+         "detail": f"{settings.gemini_model} via {gemini}: 7 Gemini agents in a 10-member team (coordinator, "
+                   "goal reader, SQL analyst, brief, plan explainer, notices, chart captions), see the Agents tab" if gemini else "No key or Vertex project set: templates "
                    "and tested questions stand in"},
         {"id": "gemini_enterprise", "name": "Gemini Enterprise",
          "state": "on" if settings.gemini_enterprise_app else "ready",
@@ -184,7 +184,7 @@ def integrations(request: Request):
             elif item["id"] == "bigquery" and h.get("backend") == "bigquery":
                 items[i] |= {"state": "on", "detail": "The deployment's warehouse; ARIMA_PLUS forecasts and anomalies"}
             elif item["id"] == "gemini" and h.get("gemini"):
-                items[i] |= {"state": "on", "detail": f"{h.get('model')} on the deployment: six roles"}
+                items[i] |= {"state": "on", "detail": f"{h.get('model')} on the deployment: 7 Gemini agents in a 10-member team"}
             elif item["id"] == "pubsub":
                 items[i] |= {"detail": "Shown once the deployment runs this version (redeploy)"}
             elif item["id"] == "looker" and h.get("backend") == "bigquery" and item["state"] == "off":

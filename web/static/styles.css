@@ -459,3 +459,28 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .runs li.empty { color: var(--muted); font-size: var(--step--1); }
 .runs p { font-size: var(--step--1); margin: 0.4rem 0; max-width: 80ch; }
 @media (max-width: 720px) { .trace li { grid-template-columns: 1.4rem minmax(0, 1fr); } .trace li span, .trace code { grid-column: 2; } }
+
+/* ---------- real-data source switch (Today) ---------- */
+.source-card { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius-ui);
+  padding: 1rem 1.15rem; margin: 1.25rem 0; }
+.source-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.75rem 1.5rem; }
+.source-head h2 { font-size: 1.35rem; }
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--rule); border-radius: var(--radius-ui); overflow: hidden; }
+.seg button { background: transparent; border: 0; border-right: 1px solid var(--rule); padding: 0.45rem 0.8rem;
+  font: 500 0.9rem/1.2 var(--body); color: var(--ink); cursor: pointer; }
+.seg button:last-child { border-right: 0; }
+.seg button[aria-checked="true"] { background: var(--ink); color: var(--panel); }
+.seg button:disabled { opacity: 0.55; cursor: progress; }
+.source-body { margin-top: 0.85rem; display: grid; gap: 0.6rem; }
+.source-body .state { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; }
+.source-body .state .dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--offline); flex: none; }
+.source-body .state.on .dot { background: var(--good); box-shadow: 0 0 0 3px rgba(31,122,109,.18); }
+.source-body .state.replay .dot { background: var(--cooled); box-shadow: 0 0 0 3px rgba(59,110,168,.18); }
+.source-body .state.wait .dot { background: var(--warn); }
+.source-body .readings { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.source-body .readings span { background: var(--ground); border-radius: var(--radius-room); padding: 0.25rem 0.55rem; font-size: 0.9rem; }
+.source-body .readings b { font-weight: 600; }
+.source-body .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.source-body select { font: inherit; padding: 0.3rem 0.4rem; border: 1px solid var(--rule); border-radius: var(--radius-ui); background: #fff; max-width: 100%; }
+.source-body .hint { margin: 0; }
+.source-body code { font-size: 0.85rem; background: var(--ground); padding: 0 0.3rem; border-radius: 3px; word-break: break-all; }

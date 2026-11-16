@@ -346,7 +346,8 @@ def plan(store: Store, day: date | None = None, constraints: dict | Constraints 
         co2_fix = _steady_co2(k["p90"], a.capacity) > settings.co2_limit_ppm >= _steady_co2(k["p90"], b.capacity)
         reasons = []
         if b.block != a.block:
-            reasons.append("changes block")
+            names = {"AUD": "the auditoriums", "B": "Block B", "TL": "the Tech Labs"}
+            reasons.append(f"moves to another building ({names.get(a.block, a.block)} to {names.get(b.block, b.block)})")
         if fill > 0.85:
             reasons.append(f"would be {fill:.0%} full on a busy week")
         if k["weeks"] < 2:

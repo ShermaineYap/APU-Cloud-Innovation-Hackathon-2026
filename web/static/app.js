@@ -40,6 +40,109 @@ function toast(msg) {
 let mode = {};
 let rooms = [];
 
+/* ---------- real-data source: ESP32 node, dataset replay, or simulation ---------- */
+let sourceChoice = null; // what the presenter picked; null until the first overview says what is running
+let sourcePoll = null;
+const SPEEDS = [[2, "Fast (2 s per 5 min)"], [3, "Demo (3 s per 5 min)"], [6, "Slow (6 s per 5 min)"]];
+
+function datasetTime(ts) {
+  const d = new Date(String(ts).replace(" ", "T"));
+  return Number.isNaN(d.getTime()) ? esc(ts) : d.toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function readingChips(r) {
+  if (!r) return "";
+  const chips = [];
+  if (r.temp_c != null) chips.push(`Temperature <b>${fmt(r.temp_c, 1)}°C</b>`);
+  if (r.humidity_pct != null) chips.push(`Humidity <b>${fmt(r.humidity_pct, 0)}%</b>`);
+  if (r.co2_ppm != null) chips.push(`CO₂ <b>${fmt(r.co2_ppm, 0)} ppm</b>`);
+  if (r.occupied != null) chips.push(`Room <b>${r.occupied ? "occupied" : "empty"}</b>`);
+  if (r.ac_on != null) chips.push(`AC relay <b>${r.ac_on ? "on" : "off"}</b>`);
+  if (r.rssi_dbm != null) chips.push(`Wi-Fi <b>${fmt(r.rssi_dbm, 0)} dBm</b>`);
+  return `<div class="readings">${chips.map((c) => `<span>${c}</span>`).join("")}</div>`;
+}
+
+function renderSource(m) {
+  if (!m || !m.replay) return;
+  if (sourceChoice === null) sourceChoice = m.source || "simulation";
+  if (m.source === "esp32" && !m.replay.running) sourceChoice = "esp32"; // a board that reports shows itself
+  const room = m.live_room;
+  $("#source-room").textContent = room;
+  document.querySelectorAll("[data-source]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.source === sourceChoice)));
+  const body = $("#source-body");
+  const e = m.esp32 || {}, rp = m.replay || {};
+  if (sourceChoice === "esp32") {
+    body.dataset.view = "";
+    body.innerHTML = e.online
+      ? `<p class="state on"><span class="dot"></span>Live: ESP32 node ${esc(e.device || "")} in ${esc(e.room || room)}, last reading ${fmt(e.seconds_ago)} s ago</p>
+         ${readingChips(e.reading)}
+         <p class="hint">Real measurements from our board on stage. Approve an AC change for ${esc(room)} (Actions or Autopilot) and the board's AC relay follows it.</p>`
+      : `<p class="state wait"><span class="dot"></span>Waiting for the ESP32 node in ${esc(room)}…${e.last_seen ? ` last heard ${fmt(e.seconds_ago)} s ago` : ""}</p>
+         <p class="hint">The board posts to <code>${esc(location.origin)}/api/ingest</code> every 5 s with the ingest key (firmware/campuspulse_board). This turns green on its first reading. If the board can't connect, switch to <b>Real dataset replay</b>.</p>`;
+  } else if (sourceChoice === "replay") {
+    const presetOpts = Object.entries(rp.presets || {}).map(([k, v]) => `<option value="${k}" ${k === (rp.preset || "arrival") ? "selected" : ""}>${esc(v)}</option>`).join("");
+    const speedOpts = SPEEDS.map(([v, t]) => `<option value="${v}" ${v === (rp.every_s || 3) ? "selected" : ""}>${t}</option>`).join("");
+    const live = rp.running
+      ? `<p class="state replay"><span class="dot"></span>Replaying real measured data into ${esc(rp.room)}${rp.dataset_time ? ` · measured ${datasetTime(rp.dataset_time)}` : ""}</p>${readingChips(rp.reading)}`
+      : `<p class="state"><span class="dot"></span>Replay stopped. Press Start to stream the dataset into ${esc(room)}.</p>`;
+    // Keep the controls in place between refreshes, so an open dropdown is not redrawn under the presenter.
+    if (body.dataset.view === `replay-${rp.running}` && $("#rp-live")) {
+      $("#rp-live").innerHTML = live;
+      return startSourcePoll();
+    }
+    body.dataset.view = `replay-${rp.running}`;
+    body.innerHTML = `<div id="rp-live">${live}</div>
+      <div class="controls">
+        <label class="visually-hidden" for="rp-preset">Where to start</label><select id="rp-preset">${presetOpts}</select>
+        <label class="visually-hidden" for="rp-speed">Speed</label><select id="rp-speed">${speedOpts}</select>
+        <button type="button" class="ghost" id="rp-start">${rp.running ? "Restart" : "Start"}</button>
+      </div>
+      <p class="hint">${esc(rp.source || "")}. Real sensor readings, but not APU's and not live: the room is tagged "real data, replayed".</p>`;
+    $("#rp-start").addEventListener("click", () => setSource("replay"));
+  } else {
+    body.dataset.view = "";
+    body.innerHTML = `<p class="state"><span class="dot"></span>Simulated: ${esc(room)} follows APU's real timetable and KL weather, like the other 19 rooms.</p>`;
+  }
+  startSourcePoll();
+}
+
+function startSourcePoll() {
+  const fast = sourceChoice !== "simulation";
+  if (fast && !sourcePoll) sourcePoll = setInterval(pollSource, 3000);
+  if (!fast && sourcePoll) { clearInterval(sourcePoll); sourcePoll = null; }
+}
+
+let sourceTick = 0;
+async function pollSource() {
+  if (document.hidden || replayAt) return;
+  sourceTick += 1;
+  try {
+    if (sourceTick % 2 === 0) await loadOverview(); // the rooms and the status bar
+    else renderSource(await api("/api/source")); // keeps the replay flowing and the readings fresh
+  } catch { /* next tick */ }
+}
+
+async function setSource(choice) {
+  const btns = document.querySelectorAll("[data-source]");
+  btns.forEach((b) => (b.disabled = true));
+  try {
+    const body = { mode: choice };
+    if (choice === "replay") {
+      body.preset = $("#rp-preset")?.value || "arrival";
+      body.every_s = Number($("#rp-speed")?.value || 3);
+    }
+    sourceChoice = choice;
+    renderSource(await api("/api/source", { method: "POST", body: JSON.stringify(body) }));
+    await loadOverview();
+    toast(choice === "replay" ? "Replaying the real dataset into the room." : choice === "esp32" ? "Listening for the ESP32 node." : "Back to the simulated room.");
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    btns.forEach((b) => (b.disabled = false));
+  }
+}
+document.querySelectorAll("[data-source]").forEach((b) => b.addEventListener("click", () => setSource(b.dataset.source)));
+
 /* ---------- status bar + lead ---------- */
 function renderStatus(m) {
   const live = m.live_node_online;
@@ -55,7 +158,7 @@ function renderStatus(m) {
 
 function renderStatusFoot(m) {
   $("#foot-mode").textContent =
-    `Data: 1 physical node in ${m.live_room} + 20 real APU rooms on their real timetable, sensors simulated (labelled). Store: ${m.backend === "bigquery" ? "BigQuery" : "local DuckDB"}. ` +
+    `Data: ${m.source === "esp32" ? `live ESP32 node in ${m.live_room}` : m.source === "replay" ? `real dataset replayed into ${m.live_room}` : "no real node reporting"} + 20 real APU rooms on their real timetable, other sensors simulated (labelled). Store: ${m.backend === "bigquery" ? "BigQuery" : "local DuckDB"}. ` +
     `AI: ${m.gemini ? `Gemini ${m.model}` : "offline mode (no Gemini key)"}. Assumptions: energy RM ${m.tariff_rm_per_kwh}/kWh, grid carbon ${m.grid_kg_co2e_per_kwh} kg CO₂e/kWh.`;
   $("#ask-mode").textContent = m.gemini
     ? "Gemini writes the SQL, CampusPulse checks it is read-only, the warehouse runs it."
@@ -537,6 +640,7 @@ function showTab(name, push = true) {
   window.scrollTo({ top: 0 });
 }
 document.querySelectorAll("[role=tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+window.addEventListener("hashchange", () => showTab(location.hash.slice(1) || "today", false));
 document.querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.goto)));
 document.querySelector(".tabs").addEventListener("keydown", (e) => {
   if (!["ArrowLeft", "ArrowRight"].includes(e.key)) return;
@@ -876,6 +980,7 @@ function applyOverview(o) {
   setupReplayDays(o.replay_range);
   if (replayAt) renderReplayUi();
   renderStatus(o.mode);
+  renderSource(o.mode);
   renderPlan(o.rooms);
   if (o.replay_at) {
     $("#status").innerHTML = `<span class="dot"></span>Replaying recorded readings from ${esc(replayLabel())}`;

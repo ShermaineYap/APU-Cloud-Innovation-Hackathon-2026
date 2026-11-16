@@ -161,3 +161,34 @@ def test_study_finder_lists_free_rooms_and_closes_at_night():
         assert cooled == sorted(cooled, reverse=True)  # already-cooled rooms first
         night = c.get("/api/overview", params={"at": f"{wed:%Y-%m-%d}T23:00"}).json()["study"]
         assert not night["open"] and night["rooms"] == []
+
+
+def test_built_in_replay_switch_streams_real_data_and_stops():
+    from datetime import datetime, timedelta, timezone
+    from campuspulse.replay import replayer
+    with client() as c:
+        m = c.post("/api/source", json={"mode": "replay", "preset": "stale", "every_s": 2}).json()
+        assert m["source"] == "replay" and m["replay"]["running"] and m["replay"]["rows_sent"] == 1
+        assert m["replay"]["reading"]["co2_ppm"] > 300 and "Belgium" in m["replay"]["source"]
+        # Rows fall due with the clock, not a thread: pretend 10 s have passed.
+        replayer.run["started"] -= timedelta(seconds=10)
+        assert c.get("/api/source").json()["replay"]["rows_sent"] == 6
+        room = next(x for x in c.get("/api/overview").json()["rooms"] if x["room_id"] == "B-08-05")
+        assert room["replayed"] is True and room["simulated"] is False and room["co2_ppm"] > 300
+        # A long gap sends only the latest rows, never a flood.
+        replayer.run["started"] = datetime.now(timezone.utc) - timedelta(hours=2)
+        assert len(replayer.due()) <= 12
+        m = c.post("/api/source", json={"mode": "esp32"}).json()
+        assert not m["replay"]["running"] and m["source"] != "replay"
+        assert c.post("/api/source", json={"mode": "replay", "room": "Z-9"}).status_code == 422
+
+
+def test_esp32_reading_switches_source_to_live():
+    with client() as c:
+        h = {"X-Device-Key": "test-key"}
+        node = {"device_id": "esp32-b0805", "room_id": "B-08-05", "occupied": True, "ac_on": True,
+                "rssi_dbm": -55, "temp_c": 27.1, "humidity_pct": 64}
+        assert c.post("/api/ingest", json=node, headers=h).status_code == 200
+        m = c.get("/api/source").json()
+        assert m["source"] == "esp32" and m["esp32"]["online"] and m["esp32"]["reading"]["temp_c"] == 27.1
+        assert c.get("/api/rooms/B-08-05/command", headers=h).json()["ac_mode"]

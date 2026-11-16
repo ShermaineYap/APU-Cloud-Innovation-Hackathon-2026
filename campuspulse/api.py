@@ -27,6 +27,7 @@ from .network import is_camera, is_replay, is_test_device
 from .config import settings
 from .control import control
 from .weather import weather
+from .replay import replayer
 from .simulator import Fleet
 from .store import get_store
 
@@ -229,6 +230,9 @@ def _accept(rows: list[dict]) -> int:
     hardware = [r for r in rows if not is_replay(r["device_id"])]
     if hardware:
         state["last_real"] = now
+        sensors = [r for r in hardware if not is_camera(r["device_id"])]
+        if sensors:
+            state["last_hw"] = sensors[-1]
     state["real_count"] += n
     for r in rows:
         kind = "camera" if is_camera(r["device_id"]) else "sensor"
@@ -282,13 +286,27 @@ async def pubsub_push(request: Request, key: str = ""):
 
 # --- read API -------------------------------------------------------------------
 
+def _esp32_status(last: datetime | None, online: bool) -> dict:
+    hw = state.get("last_hw") or {}
+    reading = {k: hw.get(k) for k in ("temp_c", "humidity_pct", "co2_ppm", "occupied", "ac_on", "rssi_dbm")}
+    return {"online": online, "last_seen": last.isoformat() if last else None,
+            "seconds_ago": round((datetime.now(timezone.utc) - last).total_seconds()) if last else None,
+            "device": hw.get("device_id"), "room": hw.get("room_id") or LIVE_ROOM,
+            "reading": reading if hw else None, "ingest_url": "/api/ingest", "command_url": f"/api/rooms/{LIVE_ROOM}/command"}
+
+
 def _mode() -> dict:
     last = state["last_real"]
-    live_seen = bool(last and (datetime.now(timezone.utc) - last).total_seconds() < 300)
+    live_seen = bool(last and (datetime.now(timezone.utc) - last).total_seconds() < 120)
     lr = state.get("last_replay")
-    replay_on = bool(lr and (datetime.now(timezone.utc) - lr).total_seconds() < 300)
+    replay_status = replayer.status()
+    replay_on = replay_status["running"] or bool(lr and (datetime.now(timezone.utc) - lr).total_seconds() < 120)
+    # The presenter's switch wins: a running replay is the source even if the board reported a minute ago.
+    source = "replay" if replay_status["running"] else "esp32" if live_seen else "replay" if replay_on else "simulation"
     return {"backend": settings.backend, "gemini": settings.gemini_enabled, "model": settings.gemini_model,
-            "replay_online": replay_on, "replay_device": state.get("replay_device") if replay_on else None,
+            "source": source, "esp32": _esp32_status(last, live_seen), "replay": replay_status,
+            "replay_online": replay_on,
+            "replay_device": (state.get("replay_device") or replay_status.get("device")) if replay_on else None,
             "live_room": LIVE_ROOM, "live_node_online": live_seen,
             "live_node_last_seen": last.isoformat() if last else None,
             "real_readings": state["real_count"], "tariff_rm_per_kwh": settings.tariff_rm_per_kwh,
@@ -569,10 +587,50 @@ def ask_suggestions():
 async def catch_up_simulation(request: Request, call_next):
     """Request mode (Cloud Run free tier): bring simulated readings up to now before answering."""
     path = request.url.path
-    if (settings.sim_mode == "request" and path.startswith(("/api/", "/a2a"))
-            and not path.startswith(("/api/ingest", "/api/pubsub"))):
-        await run_in_threadpool(_catch_up)
+    if path.startswith(("/api/", "/a2a")) and not path.startswith(("/api/ingest", "/api/pubsub")):
+        if replayer.run is not None:
+            await run_in_threadpool(_replay_tick)
+        if settings.sim_mode == "request":
+            await run_in_threadpool(_catch_up)
     return await call_next(request)
+
+
+def _replay_tick() -> None:
+    """Feed the rows of the built-in dataset replay that are due by now, through the normal ingest path."""
+    try:
+        rows = replayer.due()
+        if rows:
+            _accept([Reading.model_validate(p).to_row() for p in rows])
+    except Exception:  # the replay must never break the dashboard
+        log.exception("dataset replay tick failed")
+
+
+class SourceRequest(BaseModel):
+    mode: Literal["simulation", "esp32", "replay"]
+    preset: str = "arrival"
+    every_s: float = Field(default=3.0, ge=1.0, le=60.0)
+    room: str = LIVE_ROOM
+
+
+@app.get("/api/source")
+def data_source():
+    """Where B-08-05's readings come from right now: the simulator, the ESP32 node, or the dataset replay."""
+    return _mode()
+
+
+@app.post("/api/source")
+def set_data_source(body: SourceRequest):
+    """Switch the real-data source from the dashboard. "replay" starts the built-in dataset replay;
+    "esp32" and "simulation" stop it (the ESP32 shows as live by itself as soon as it reports)."""
+    if body.room not in ROOM_BY_ID:
+        raise HTTPException(422, f"unknown room_id {body.room}")
+    if body.mode == "replay":
+        replayer.start(body.room, body.preset, body.every_s)
+        _replay_tick()  # the first reading lands now, not after the first interval
+    else:
+        replayer.stop()
+    cache.drop("overview")
+    return _mode()
 
 
 @app.middleware("http")
