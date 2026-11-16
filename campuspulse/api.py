@@ -573,6 +573,20 @@ async def revalidate_web_app(request: Request, call_next):
     return response
 
 
+@app.get("/api/campus")
+def campus_all_rooms(at: str | None = None):
+    """Every physical APU room and its classes from the real timetable, at `at` (local, e.g. 2026-11-11T14:00)."""
+    from .campus_all import campus_day
+    if at:
+        try:
+            when = pd.Timestamp(at).to_pydatetime().replace(tzinfo=None)
+        except ValueError:
+            raise HTTPException(422, "at must be a local date-time like 2026-11-11T14:00")
+    else:
+        when = datetime.now(settings.timezone).replace(tzinfo=None)
+    return campus_day(when)
+
+
 # Gemini Enterprise (A2A agent) and the Google Sheets / Calendar exports.
 from . import a2a, google_tools  # noqa: E402
 

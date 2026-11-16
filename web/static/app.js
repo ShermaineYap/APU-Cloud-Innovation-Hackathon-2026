@@ -421,6 +421,9 @@ let integrations = null;
 async function loadIntegrations() {
   const d = await api("/api/integrations");
   integrations = Object.fromEntries(d.items.map((i) => [i.id, i]));
+  $("#int-hint").textContent = d.reporting === "the Cloud Run deployment"
+    ? `Reporting the live Cloud Run deployment (${d.base_url}); this laptop runs a local copy.`
+    : "What this deployment runs on, and what is ready to switch on.";
   const label = { on: "On", ready: "Ready", off: "Off" };
   $("#integrations").innerHTML = d.items.map((i) => `<li class="int ${esc(i.state)}">
       <div class="int-top"><b>${esc(i.name)}</b><span class="badge ${esc(i.state)}">${label[i.state] || esc(i.state)}</span></div>
@@ -743,8 +746,64 @@ function renderStudy(st) {
   $("#study").querySelectorAll("button[data-id]").forEach((b) => b.addEventListener("click", () => openRoom(b.dataset.id)));
 }
 
+/* ---------- whole campus: every APU room from the real timetable ---------- */
+let campus = null, cwBlock = "All", cwQuery = "", campusFetch = 0;
+async function loadCampus() {
+  const ticket = ++campusFetch;
+  const d = await api(replayAt ? `/api/campus?at=${encodeURIComponent(replayAt)}` : "/api/campus");
+  if (ticket !== campusFetch) return;
+  campus = d;
+  renderCampus();
+}
+
+function renderCampus() {
+  const d = campus;
+  if (!d) return;
+  const when = replayAt ? replayLabel() : `${d.weekday} now`;
+  $("#cw-kpis").innerHTML = kpiTiles([
+    [`${fmt(d.rooms_in_class)} of ${fmt(d.rooms)}`, `rooms with a class (${when})`],
+    [fmt(d.rooms_free), "rooms free right now"],
+    [fmt(d.classes_today), `classes on ${d.weekday} in physical rooms`],
+    [fmt(d.intakes_in_class), "intakes in class right now"],
+  ]);
+  $("#cw-hint").textContent = `Every APU room and class for the week of ${d.week_of}, from APU's public timetable (${fmt(d.classes_week)} classes a week; ${fmt(d.online_classes_today)} online classes today use no room). The ${d.modelled} rooms above carry sensors.`;
+  const blocks = ["All", ...d.blocks.map((b) => b.block)];
+  $("#cw-filters").innerHTML = blocks.map((b) => `<button type="button" class="chip-btn" aria-pressed="${b === cwBlock}" data-b="${esc(b)}">${esc(b)}${b === "All" ? "" : ` <span class="hint">${d.blocks.find((x) => x.block === b).rooms.length}</span>`}</button>`).join("");
+  $("#cw-filters").querySelectorAll("button").forEach((btn) => btn.addEventListener("click", () => { cwBlock = btn.dataset.b; renderCampus(); }));
+  const q = cwQuery.toLowerCase();
+  const match = (r) => !q || r.full_name.toLowerCase().includes(q) || r.classes.some((c) => c.module.toLowerCase().includes(q));
+  const html = d.blocks.filter((b) => cwBlock === "All" || b.block === cwBlock).map((b) => {
+    const rooms = b.rooms.filter(match);
+    if (!rooms.length) return "";
+    return `<section class="cw-block"><h3>${esc(b.block)} <span class="hint">${rooms.length} rooms · ${b.in_class} in class · ${b.classes} classes today</span></h3>
+      <div class="cw-grid">${rooms.map((r) => `<button type="button" class="cw-room ${r.status}" data-room="${esc(r.full_name)}" title="${esc(r.full_name)}">
+        <span class="cw-name">${esc(r.name)}${r.modelled ? ` <span class="badge auto">sensors</span>` : ""}</span>
+        <span class="cw-line">${r.now ? `${esc(r.now.module.split(" ")[0])} · ${r.now.intakes} intake${r.now.intakes > 1 ? "s" : ""}`
+          : r.next ? `Free · next ${esc(r.next.time)}` : r.classes.length ? "Free · done for today" : "No classes today"}</span>
+      </button>`).join("")}</div></section>`;
+  }).join("");
+  $("#cw-blocks").innerHTML = html || `<p class="hint">No rooms match “${esc(cwQuery)}”.</p>`;
+  $("#cw-blocks").querySelectorAll(".cw-room").forEach((btn) => btn.addEventListener("click", () => openCampusRoom(btn.dataset.room)));
+}
+
+function openCampusRoom(fullName) {
+  const r = campus?.blocks.flatMap((b) => b.rooms).find((x) => x.full_name === fullName);
+  if (!r) return;
+  if (r.modelled) { openRoom(r.modelled); return; }
+  const box = $("#cw-detail");
+  box.hidden = false;
+  box.innerHTML = `<div class="cw-detail-top"><h3>${esc(r.full_name)}</h3><button type="button" class="linkish" id="cw-close">Close</button></div>
+    <p class="hint">${campus.weekday}: ${r.classes.length ? `${r.classes.length} class${r.classes.length > 1 ? "es" : ""}` : "no classes"}. No sensors in this room yet: timetable only.</p>
+    ${r.classes.length ? `<table class="rows"><thead><tr><th>Time</th><th>Module</th><th class="num">Intakes</th></tr></thead><tbody>${
+      r.classes.map((c) => `<tr><td>${esc(c.time)}</td><td>${esc(c.module)}</td><td class="num">${c.intakes}</td></tr>`).join("")}</tbody></table>` : ""}`;
+  $("#cw-close").addEventListener("click", () => (box.hidden = true));
+  box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+$("#cw-search").addEventListener("input", (e) => { cwQuery = e.target.value.trim(); renderCampus(); });
+
 function applyOverview(o) {
   mode = o.mode;
+  loadCampus().catch(() => {});
   if (o.weather) {
     $("#weather").textContent = `KL ${fmt(o.weather.temp_c, 0)}°C`;
     $("#weather").title = `Outdoor temperature at APU now (${o.weather.source})`;

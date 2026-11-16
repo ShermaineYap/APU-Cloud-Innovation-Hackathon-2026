@@ -161,7 +161,7 @@ web/static/         dashboard
 firmware/           ESP32 node (MQTT QoS 1 or HTTPS)
 edge/               YOLO people counter (camera node, optional)
 deploy/, scripts/   Cloud Run deploy, BigQuery setup
-tests/              52 tests: A2A agent and Google exports, guard, engine finds planted problems, Autopilot (constraints, no double booking), API, camera, control, cloud paths (BigQuery ML, Pub/Sub, catch-up), Gemini loop
+tests/              54 tests: A2A agent and Google exports, guard, engine finds planted problems, Autopilot (constraints, no double booking), API, camera, control, cloud paths (BigQuery ML, Pub/Sub, catch-up), Gemini loop
 ```
 
 ## API
@@ -184,6 +184,7 @@ tests/              52 tests: A2A agent and Google exports, guard, engine finds 
 | GET | `/api/autopilot/latest` | The last plan |
 | GET | `/.well-known/agent-card.json` | A2A agent card: register CampusPulse in Gemini Enterprise |
 | POST | `/a2a` | A2A JSON-RPC `message/send`: ask the data, plan tomorrow (proposes only), campus status |
+| GET | `/api/campus?at=…` | Every physical APU room (213) and its classes from the real timetable |
 | GET | `/api/integrations` | Google services in use and ready to switch on |
 | GET | `/api/autopilot/latest.csv` | Tomorrow's room changes for Google Sheets (`=IMPORTDATA`) |
 | GET | `/api/autopilot/latest.ics` | Tomorrow's room changes for Google Calendar |

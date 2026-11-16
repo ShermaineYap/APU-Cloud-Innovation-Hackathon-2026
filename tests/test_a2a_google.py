@@ -99,3 +99,29 @@ def test_integrations_panel_lists_google_services():
         assert ids["gemini_enterprise"]["link"].endswith("/.well-known/agent-card.json")
         assert ids["sheets"]["formula"].startswith('=IMPORTDATA("')
         assert ids["calendar"]["link"].startswith("https://calendar.google.com/calendar/r?cid=")
+
+
+def test_whole_campus_lists_every_physical_room():
+    with client() as c:
+        d = c.get("/api/campus", params={"at": "2026-11-11T14:00"}).json()
+        assert d["weekday"] == "Wed" and d["rooms"] == 213 and d["modelled"] == 20
+        rooms = [r for b in d["blocks"] for r in b["rooms"]]
+        assert len(rooms) == 213 and not any(r["full_name"].upper().startswith("ONL") for r in rooms)
+        assert sum(1 for r in rooms if r["modelled"]) == 20
+        assert d["rooms_in_class"] == sum(r["status"] == "in_class" for r in rooms) > 0
+        assert d["classes_today"] == sum(len(r["classes"]) for r in rooms)
+        sat = c.get("/api/campus", params={"at": "2026-11-14T11:00"}).json()
+        assert sat["rooms_in_class"] == 0
+        assert c.get("/api/campus", params={"at": "nope"}).status_code == 422
+
+
+def test_public_url_makes_google_links_usable():
+    object.__setattr__(settings, "public_url", "https://campuspulse.example.invalid")
+    try:
+        with client() as c:
+            items = {i["id"]: i for i in c.get("/api/integrations").json()["items"]}
+            assert items["sheets"]["state"] == "on" and "https://campuspulse.example.invalid/api/" in items["sheets"]["formula"]
+            assert items["calendar"]["state"] == "on"
+            assert items["gemini_enterprise"]["link"].startswith("https://campuspulse.example.invalid/")
+    finally:
+        object.__setattr__(settings, "public_url", None)

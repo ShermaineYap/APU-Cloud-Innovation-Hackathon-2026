@@ -74,6 +74,26 @@
           <div><dt><span class="swatch offline"></span></dt><dd>No recent data</dd></div>
         </dl>
       </div>
+
+      <div class="campus-wide" aria-labelledby="cw-title">
+        <div class="section-head">
+          <h2 id="cw-title">Whole campus</h2>
+          <p class="hint" id="cw-hint">Every APU room and class from the real timetable. The 20 rooms above carry sensors; click one of them for its data.</p>
+        </div>
+        <div class="kpis" id="cw-kpis"></div>
+        <div class="cw-tools">
+          <div class="cw-filters" id="cw-filters" role="group" aria-label="Filter by block"></div>
+          <label class="visually-hidden" for="cw-search">Search rooms or modules</label>
+          <input id="cw-search" type="search" placeholder="Search a room or module, e.g. B-08 or CT026" autocomplete="off">
+        </div>
+        <div id="cw-detail" class="card cw-detail" hidden></div>
+        <div id="cw-blocks"></div>
+        <dl class="legend">
+          <div><dt><span class="swatch cw-in"></span></dt><dd>Class now</dd></div>
+          <div><dt><span class="swatch cw-free"></span></dt><dd>Free now, classes later or earlier</dd></div>
+          <div><dt><span class="swatch cw-none"></span></dt><dd>No classes today</dd></div>
+        </dl>
+      </div>
     </section>
 
     <!-- AUTOPILOT: the system decides tomorrow -->
@@ -194,7 +214,7 @@
       <div class="integrations">
         <div class="section-head">
           <h2 id="int-title">Google Cloud and integrations</h2>
-          <p class="hint">What this deployment runs on, and what is ready to switch on.</p>
+          <p class="hint" id="int-hint">What this deployment runs on, and what is ready to switch on.</p>
         </div>
         <ul id="integrations" class="int-list" aria-labelledby="int-title"></ul>
       </div>

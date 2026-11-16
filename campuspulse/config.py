@@ -71,6 +71,7 @@ class Settings:
     a2a_key: str | None = field(default_factory=lambda: os.getenv("CP_A2A_KEY") or None)
     public_url: str | None = field(default_factory=lambda: os.getenv("CP_PUBLIC_URL") or None)
     gemini_enterprise_app: str | None = field(default_factory=lambda: os.getenv("CP_GEMINI_ENTERPRISE_APP") or None)
+    looker_url: str | None = field(default_factory=lambda: os.getenv("CP_LOOKER_URL") or None)
 
     ingest_key: str = field(default_factory=lambda: os.getenv("CP_INGEST_KEY", "dev-ingest-key"))
     live_simulator: bool = field(default_factory=lambda: _bool("CP_LIVE_SIM", True))

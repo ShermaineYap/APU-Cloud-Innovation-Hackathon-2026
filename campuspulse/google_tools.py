@@ -96,14 +96,45 @@ def plan_ics():
                              "Cache-Control": "no-cache"})
 
 
+_cloud_cache: dict = {"at": 0.0, "value": None}
+
+
+def _cloud_report() -> dict | None:
+    """Running locally with CP_PUBLIC_URL set: ask the Cloud Run deployment what it runs on.
+
+    Returns {"items": {id: item}} from a deployment with this panel, {"health": {...}} from an older
+    one, or None when there is no public URL, we ARE the deployment, or it can't be reached."""
+    import time
+
+    import httpx
+    if os.getenv("K_SERVICE") or not settings.public_url:
+        return None
+    if time.time() - _cloud_cache["at"] < 60:
+        return _cloud_cache["value"]
+    base, value = settings.public_url.rstrip("/"), None
+    try:
+        r = httpx.get(f"{base}/api/integrations", timeout=8)
+        if r.status_code == 200:
+            value = {"items": {i["id"]: i for i in r.json().get("items", [])}}
+        else:
+            h = httpx.get(f"{base}/api/health", timeout=8)
+            value = {"health": h.json()} if h.status_code == 200 else None
+    except Exception:
+        value = None
+    _cloud_cache.update(at=time.time(), value=value)
+    return value
+
+
 @router.get("/api/integrations")
 def integrations(request: Request):
     from .a2a import _base_url
     base = _base_url(request)
     on_cloud_run = bool(os.getenv("K_SERVICE"))
+    cloud = _cloud_report()
     gemini = ("Vertex AI" if settings.gemini_vertex and settings.gcp_project
               else "Google AI Studio" if settings.gemini_api_key else None)
     ics = f"{base}/api/autopilot/latest.ics"
+    public = base.startswith("https://")
     items = [
         {"id": "gemini", "name": "Gemini", "state": "on" if gemini else "off",
          "detail": f"{settings.gemini_model} via {gemini}: six roles (goal reader, SQL agent, brief, plan "
@@ -123,15 +154,39 @@ def integrations(request: Request):
         {"id": "pubsub", "name": "Pub/Sub", "state": "on" if settings.pubsub_topic else "off",
          "detail": "Sensor readings are published, then pushed to the service" if settings.pubsub_topic
          else "Readings are stored directly"},
-        {"id": "sheets", "name": "Google Sheets", "state": "ready",
-         "detail": "In any sheet, put this in cell A1 to pull tomorrow's room changes live",
+        {"id": "sheets", "name": "Google Sheets", "state": "on" if public else "ready",
+         "detail": "In any sheet, put this in cell A1 to pull tomorrow's room changes live" if public
+         else "Set CP_PUBLIC_URL to the Cloud Run address: Google can't read a laptop's localhost",
          "formula": f'=IMPORTDATA("{base}/api/autopilot/latest.csv")', "link": f"{base}/api/autopilot/latest.csv"},
-        {"id": "calendar", "name": "Google Calendar", "state": "ready",
+        {"id": "calendar", "name": "Google Calendar", "state": "on" if public else "ready",
          "detail": "Subscribe to tomorrow's room changes as calendar events",
          "link": "https://calendar.google.com/calendar/r?cid=" + quote(ics.replace("https://", "webcal://", 1)
                                                                         if ics.startswith("https://") else ics, safe=""),
          "file": ics},
-        {"id": "looker", "name": "Looker Studio", "state": "ready" if settings.backend == "bigquery" else "off",
-         "detail": "Build a dashboard on the BigQuery views v_room_hourly and v_empty_cooled (see docs/GOOGLE_TOOLS.md)"},
+        {"id": "looker", "name": "Looker Studio",
+         "state": "on" if settings.looker_url else ("ready" if settings.backend == "bigquery" else "off"),
+         "detail": "Dashboard on the BigQuery views" if settings.looker_url
+         else "Build a dashboard on the BigQuery views v_room_hourly and v_empty_cooled (docs/GOOGLE_TOOLS.md), "
+              "then set CP_LOOKER_URL", **({"link": settings.looker_url} if settings.looker_url else {})},
     ]
-    return {"base_url": base, "items": items}
+    source = "this server"
+    if cloud and "items" in cloud:  # the deployment has this panel: take its word for its own services
+        source = "the Cloud Run deployment"
+        for i, item in enumerate(items):
+            if item["id"] in ("cloud_run", "bigquery", "pubsub", "looker", "gemini") and item["id"] in cloud["items"]:
+                items[i] = cloud["items"][item["id"]] | {"detail": cloud["items"][item["id"]]["detail"] + " (cloud)"}
+    elif cloud and "health" in cloud:  # an older deployment: what /api/health tells us
+        source = "the Cloud Run deployment"
+        h = cloud["health"]
+        for i, item in enumerate(items):
+            if item["id"] == "cloud_run":
+                items[i] |= {"state": "on", "detail": f"Live at {settings.public_url}"}
+            elif item["id"] == "bigquery" and h.get("backend") == "bigquery":
+                items[i] |= {"state": "on", "detail": "The deployment's warehouse; ARIMA_PLUS forecasts and anomalies"}
+            elif item["id"] == "gemini" and h.get("gemini"):
+                items[i] |= {"state": "on", "detail": f"{h.get('model')} on the deployment: six roles"}
+            elif item["id"] == "pubsub":
+                items[i] |= {"detail": "Shown once the deployment runs this version (redeploy)"}
+            elif item["id"] == "looker" and h.get("backend") == "bigquery" and item["state"] == "off":
+                items[i] |= {"state": "ready"}
+    return {"base_url": base, "items": items, "reporting": source}

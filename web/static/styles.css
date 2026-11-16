@@ -401,3 +401,32 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .badge.off { background: #ECEEEB; color: var(--muted); }
 .exports { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.9rem 0 0; }
 .exports a.chip-btn { color: var(--ink); text-decoration: none; }
+
+/* ---------- whole campus ---------- */
+.campus-wide { margin-top: clamp(2rem, 5vw, 3rem); }
+.cw-tools { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin: 1rem 0 0.8rem; }
+.cw-filters { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.cw-filters .chip-btn[aria-pressed="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.cw-filters .chip-btn[aria-pressed="true"] .hint { color: #C9D1CC; }
+#cw-search { flex: 1 1 240px; min-width: 200px; font: inherit; padding: 0.45rem 0.7rem; border: 1px solid var(--rule); border-radius: var(--radius-ui); background: #fff; }
+.cw-block { margin-top: 1rem; }
+.cw-block h3 { font: 600 1.15rem/1.2 var(--cond); margin: 0 0 0.45rem; }
+.cw-block h3 .hint { font: 400 var(--step--1)/1.2 var(--body); margin-left: 0.4rem; }
+.cw-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 5px; }
+.cw-room { text-align: left; font: inherit; color: var(--ink); background: #fff; border: 1px solid var(--rule); border-left: 4px solid var(--rule); border-radius: 3px; padding: 0.35rem 0.5rem; cursor: pointer; display: flex; flex-direction: column; gap: 0.1rem; min-height: 3.4rem; }
+.cw-room:hover { border-color: var(--ink); }
+.cw-room.in_class { border-left-color: var(--in-use); background: #EEF6F3; }
+.cw-room.free { border-left-color: var(--cooled); }
+.cw-room.no_classes { background: var(--panel); color: var(--muted); }
+.cw-name { font: 600 0.98rem/1.15 var(--cond); display: flex; gap: 0.3rem; align-items: center; flex-wrap: wrap; }
+.cw-name .badge { font-size: 0.6rem; padding: 0.12rem 0.3rem; }
+.cw-line { font-size: 0.78rem; color: var(--muted); line-height: 1.25; }
+.cw-room.in_class .cw-line { color: var(--ink); }
+.cw-detail { margin: 0 0 0.8rem; }
+.cw-detail-top { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+.cw-detail table { margin-top: 0.5rem; }
+.cw-detail td, .cw-detail th { padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--rule); text-align: left; }
+.cw-detail .num { text-align: right; }
+.swatch.cw-in { background: var(--in-use); }
+.swatch.cw-free { background: #fff; border: 2px solid var(--cooled); }
+.swatch.cw-none { background: var(--panel); border: 1px solid var(--rule); }
