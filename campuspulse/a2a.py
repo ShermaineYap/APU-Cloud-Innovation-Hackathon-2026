@@ -127,9 +127,14 @@ def run_skill(skill: str, text: str) -> tuple[str, dict]:
                  f"{p['baseline']['co2_breach_hours']:g} -> {p['plan']['co2_breach_hours']:g}. "
                  f"{p['auto_moves']} room changes are safe to apply, {p['review_moves']} need a person. "
                  f"Nothing has been applied: approve it in the CampusPulse app (Autopilot tab).")
+        sv = p.get("solver", {})
         return reply.strip(), {"skill": skill, "plan_id": p["id"], "day": p["day"], "saving": s,
                                "constraints_understood": p["constraints"].get("notes", []),
-                               "moves": moves, "applied": False}
+                               "moves": moves, "applied": False,
+                               "solver": f"{sv.get('solver', 'solver')}: {sv.get('variables', '?')} variables, "
+                                         f"{sv.get('constraints', '?')} constraints, {sv.get('ms', '?')} ms",
+                               "twin": f"{_fmt(p['baseline']['kwh'])} kWh today's setup vs {_fmt(p['plan']['kwh'])} kWh planned",
+                               "explained_by": ex.get("source", "")}
     if skill == "campus_status":
         b = api.brief()
         k = analytics.kpis(get_store())
@@ -138,13 +143,13 @@ def run_skill(skill: str, text: str) -> tuple[str, dict]:
                  f"({_fmt(k['wasted_share'] * 100)}% of cooling) went to empty rooms; {k['stale_air_hours']} "
                  f"occupied room-hours had stale air; data confidence {k['fleet_confidence']}/100.\n\n"
                  "Top changes:\n" + "\n".join(f"- {t}" for t in top))
-        return reply, {"skill": skill, "kpis": k, "top_changes": top}
+        return reply, {"skill": skill, "kpis": k, "top_changes": top, "brief_source": b["brief"].get("source", "")}
     r = ask(get_store(), text)
     reply = r.get("answer") or "No answer."
     if r.get("sql"):
         reply += f"\n\nSQL used:\n{r['sql']}"
     return reply, {"skill": "ask_campus_data", "sql": r.get("sql"), "rows": (r.get("rows") or [])[:20],
-                   "source": r.get("source")}
+                   "source": r.get("source"), "attempts": r.get("attempts") or []}
 
 
 @router.post("/a2a")
@@ -170,11 +175,19 @@ async def a2a_rpc(request: Request):
                     if p.get("kind", p.get("type")) == "text").strip()
     if not text:
         return _error(rpc_id, -32602, "message needs at least one text part")
-    skill = route(text, (msg.get("metadata") or {}).get("skill") or (params.get("metadata") or {}).get("skill"))
+    hint = (msg.get("metadata") or {}).get("skill") or (params.get("metadata") or {}).get("skill")
     try:
-        reply, data = await run_in_threadpool(run_skill, skill, text[:500])
+        if hint in {s["id"] for s in SKILLS}:  # the caller named a skill: run it directly
+            skill = hint
+            reply, data = await run_in_threadpool(run_skill, skill, text[:500])
+        else:  # otherwise the coordinator agent decides which specialists to call, and in what order
+            from .agent.team import coordinate
+            run = await run_in_threadpool(coordinate, text, run_skill, route, "Gemini Enterprise (A2A)")
+            skill, reply = run["skill"], run["reply"]
+            data = run["data"] | {"skills_called": run["skills"], "coordinated_by": run["source"],
+                                  "steps": [{k: s.get(k) for k in ("agent", "did", "ok")} for s in run["steps"]]}
     except Exception as e:  # keep the protocol answer well-formed whatever happens inside
-        return _error(rpc_id, -32603, f"internal error in {skill}: {type(e).__name__}")
+        return _error(rpc_id, -32603, f"internal error: {type(e).__name__}")
     return {"jsonrpc": "2.0", "id": rpc_id, "result": {
         "kind": "message", "role": "agent", "messageId": str(uuid.uuid4()),
         "contextId": msg.get("contextId") or str(uuid.uuid4()),

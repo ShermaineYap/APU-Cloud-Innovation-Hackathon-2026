@@ -201,6 +201,18 @@ def service_checks(url: str, key: str | None) -> None:
         assert "result" in r, r
         return r["result"]["parts"][0]["text"][:70]
 
+    @check("agent team: coordinator calls specialists, checker verifies")
+    def _():
+        r = http.post(f"{url}/api/agent", json={"message": "How is the campus doing this week?"}).json()
+        assert r["steps"] and r["skills"], r
+        return f"{r['source'][:45]}; {len(r['steps'])} steps"
+
+    @check("agent roster shows every prompt")
+    def _():
+        d = http.get(f"{url}/api/agents").json()
+        assert all(a["prompt"] for a in d["agents"] if a["kind"] == "llm")
+        return f"{len(d['agents'])} members, {len(d['patterns'])} patterns"
+
     @check("Estates report PDF")
     def _():
         r = http.get(f"{url}/api/report.pdf")

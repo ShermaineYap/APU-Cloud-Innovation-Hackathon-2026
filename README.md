@@ -37,6 +37,22 @@ Estates sets goals in plain English (*"don't move Friday classes"*, *"comfort fi
 
 On the demo data a typical teaching day saves about **40% of cooling energy** and roughly halves stale-air class-hours.
 
+## The agent team
+
+CampusPulse is a team of agents, not one prompt. The **Agents** tab shows every member, the prompt it runs on, and a live trace of each run.
+
+| Member | Kind | Job | Guardrail |
+| --- | --- | --- | --- |
+| Coordinator | Gemini | Reads a request, decides which specialists to call and in what order, combines their replies | Must delegate; its reply is checked against the specialists' figures |
+| Goal reader | Gemini | Turns plain-English goals into solver constraints (function calling) | Fixed schema; a rule-based reader takes over on failure |
+| Optimiser | MIP solver | Assigns rooms and AC schedules for least energy | Deterministic, proven optimal |
+| Digital twin | Simulator | Compares today's setup with the plan in kWh, RM, CO₂e, stale-air hours | Same physics for both sides |
+| Plan explainer, Brief writer, Caption writer, Notice writer | Gemini | Write the words people read | Drafts go to the checker |
+| SQL analyst | Gemini | Writes BigQuery SQL, reads errors, fixes its own query | Read-only guard, query budget |
+| Checker | Rule (no LLM) | Rejects any figure the engine did not supply; one rewrite, then the template | Compares numbers, cannot be talked round |
+
+Patterns used (Google's multi-agent vocabulary): **coordinator**, **sequential pipeline**, **iterative refinement**, **generator and critic**, **human in the loop**. The same coordinator answers Gemini Enterprise over A2A. `POST /api/autopilot/nightly` is the run nobody presses a button for: Cloud Scheduler starts Autopilot at 18:00 on teaching days (`NIGHTLY=1 ./deploy/deploy.sh`), safe changes apply and the rest wait for a person.
+
 ## Everything else it does
 
 1. **Morning brief.** Gemini writes a short brief from actions the decision engine has already costed: what to change, why now, the first step. It may use only the engine's numbers.
@@ -161,7 +177,7 @@ web/static/         dashboard
 firmware/           ESP32 node (MQTT QoS 1 or HTTPS)
 edge/               YOLO people counter (camera node, optional)
 deploy/, scripts/   Cloud Run deploy, BigQuery setup
-tests/              54 tests: A2A agent and Google exports, guard, engine finds planted problems, Autopilot (constraints, no double booking), API, camera, control, cloud paths (BigQuery ML, Pub/Sub, catch-up), Gemini loop
+tests/              62 tests: agent team (coordinator, checker, scheduled run), A2A agent and Google exports, guard, engine finds planted problems, Autopilot (constraints, no double booking), API, camera, control, cloud paths (BigQuery ML, Pub/Sub, catch-up), Gemini loop
 ```
 
 ## API

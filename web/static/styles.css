@@ -432,3 +432,30 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .swatch.cw-none { background: var(--panel); border: 1px solid var(--rule); }
 
 .room .live.replay { color: #2C5A8C; }
+
+/* ---------- the agent team ---------- */
+.team-roster, .team-log { margin-top: clamp(2rem, 5vw, 3rem); }
+.team-run { margin-top: 1rem; background: var(--panel); padding: 1rem 1.1rem; display: grid; gap: 0.6rem; }
+.team-run .text { font-size: var(--step-1); line-height: 1.4; margin: 0; max-width: 75ch; }
+.team-run .src, .runs .src { color: var(--muted); font-size: var(--step--1); margin: 0; font-weight: 400; }
+.team-run h3 { font: 600 1.1rem/1.2 var(--cond); margin: 0.4rem 0 0; }
+.trace { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.35rem; counter-reset: step; }
+.trace li { counter-increment: step; display: grid; grid-template-columns: 1.6rem 11rem minmax(0, 1fr) auto; gap: 0.15rem 0.6rem; align-items: baseline; border-left: 3px solid var(--good); background: #fff; padding: 0.4rem 0.6rem; font-size: var(--step--1); }
+.trace li::before { content: counter(step); color: var(--muted); font: 600 0.95rem/1 var(--cond); }
+.trace li.bad { border-left-color: var(--bad); }
+.trace .ms { color: var(--muted); }
+.trace code { grid-column: 3 / -1; font-size: 0.75rem; color: var(--muted); overflow-wrap: anywhere; white-space: pre-wrap; }
+.roster { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 0.6rem; }
+.agent { background: var(--panel); border: 1px solid var(--rule); border-left: 4px solid var(--good); border-radius: var(--radius-ui); padding: 0.7rem 0.85rem; display: grid; gap: 0.3rem; align-content: start; }
+.agent.solver { border-left-color: var(--cooled); }
+.agent.rule { border-left-color: var(--stale); }
+.agent p { margin: 0; font-size: var(--step--1); }
+.agent .pattern { color: var(--muted); }
+.agent .tools code { font-size: 0.75rem; background: #fff; border: 1px solid var(--rule); padding: 0.05rem 0.3rem; border-radius: 3px; }
+.agent summary, .runs summary { cursor: pointer; font-size: var(--step--1); }
+.agent .prompt { white-space: pre-wrap; font-size: 0.75rem; line-height: 1.45; background: #fff; border: 1px solid var(--rule); padding: 0.6rem; border-radius: 3px; max-height: 20rem; overflow: auto; margin: 0.4rem 0 0; }
+.runs { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
+.runs li { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius-ui); padding: 0.5rem 0.75rem; }
+.runs li.empty { color: var(--muted); font-size: var(--step--1); }
+.runs p { font-size: var(--step--1); margin: 0.4rem 0; max-width: 80ch; }
+@media (max-width: 720px) { .trace li { grid-template-columns: 1.4rem minmax(0, 1fr); } .trace li span, .trace code { grid-column: 2; } }

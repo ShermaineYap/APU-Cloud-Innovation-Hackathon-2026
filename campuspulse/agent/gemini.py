@@ -192,23 +192,33 @@ def daily_brief(actions: list[dict], kpis: dict) -> dict:
     payload = _model_payload(kpis, actions)
     try:
         client = _client()
-        try:
-            resp = _generate(client,
-                model=settings.gemini_model,
-                contents=json.dumps(payload, default=str),
-                config=types.GenerateContentConfig(system_instruction=BRIEF_SYSTEM, temperature=0.2,
-                                                   response_mime_type="application/json"),
-            )
-        except Exception as first:
-            if getattr(first, "code", None) != 400:
-                raise
-            # Some models reject optional settings; retry with the instructions inline and defaults.
-            log.warning("Gemini brief retry without optional settings: %s", first)
-            resp = _generate(client,
-                model=settings.gemini_model,
-                contents=BRIEF_SYSTEM + "\nReturn only the JSON object.\n\n" + json.dumps(payload, default=str),
-            )
-        brief = _parse_json(resp.text)
+
+        def write(feedback):
+            body = json.dumps(payload, default=str) + (f"\n\n{feedback}" if feedback else "")
+            try:
+                resp = _generate(client,
+                    model=settings.gemini_model, contents=body,
+                    config=types.GenerateContentConfig(system_instruction=BRIEF_SYSTEM, temperature=0.2,
+                                                       response_mime_type="application/json"),
+                )
+            except Exception as first:
+                if getattr(first, "code", None) != 400:
+                    raise
+                # Some models reject optional settings; retry with the instructions inline and defaults.
+                log.warning("Gemini brief retry without optional settings: %s", first)
+                resp = _generate(client, model=settings.gemini_model,
+                                 contents=BRIEF_SYSTEM + "\nReturn only the JSON object.\n\n" + body)
+            return _parse_json(resp.text)
+
+        from .team import checked_write, verdict_note
+        brief, verdict = checked_write(write, payload, texts=lambda d: " ".join(
+            [str(d.get("headline", "")), str(d.get("summary", ""))]
+            + [f"{i.get('why_now', '')} {i.get('first_step', '')}" for i in d.get("items", [])]))
+        if brief is None:  # the checker rejected two drafts: the engine's own wording is used
+            out = _fallback_brief(actions, kpis)
+            out["source"] = f"template ({verdict_note(verdict)})"
+            out["check"] = verdict
+            return out
         known = {a["id"] for a in actions}
         brief["items"] = [i for i in brief.get("items", []) if i.get("id") in known][:5]
         by_id = {a["id"]: a for a in actions}
@@ -216,7 +226,8 @@ def daily_brief(actions: list[dict], kpis: dict) -> dict:
             a = by_id[i["id"]]
             if _repeats(i.get("first_step", ""), a["title"]):
                 i["first_step"] = FIRST_STEP[a["kind"]]
-        brief["source"] = f"Gemini ({settings.gemini_model})"
+        brief["source"] = f"Gemini ({settings.gemini_model}); {verdict_note(verdict)}"
+        brief["check"] = verdict
         return brief
     except Exception as e:  # never let the brief take the page down
         log.warning("Gemini brief failed: %s", e)
@@ -479,13 +490,21 @@ def explain_plan(p: dict) -> dict:
         return _fallback_explain(p)
     from google.genai import types
     try:
-        resp = _generate(_client(), retries=2,
-            model=settings.gemini_model, contents=json.dumps(_plan_payload(p)),
-            config=types.GenerateContentConfig(system_instruction=EXPLAIN_SYSTEM, temperature=0.2,
-                                               response_mime_type="application/json"))
-        out = _parse_json(resp.text)
-        return {"headline": str(out["headline"])[:140], "summary": str(out["summary"])[:700],
-                "source": f"Gemini ({settings.gemini_model})"}
+        from .team import checked_write, verdict_note
+        facts = _plan_payload(p)
+
+        def write(feedback):
+            resp = _generate(_client(), retries=2, model=settings.gemini_model,
+                contents=json.dumps(facts) + (f"\n\n{feedback}" if feedback else ""),
+                config=types.GenerateContentConfig(system_instruction=EXPLAIN_SYSTEM, temperature=0.2,
+                                                   response_mime_type="application/json"))
+            out = _parse_json(resp.text)
+            return {"headline": str(out["headline"])[:140], "summary": str(out["summary"])[:700]}
+
+        out, verdict = checked_write(write, facts, texts=lambda d: f"{d['headline']} {d['summary']}")
+        if out is None:
+            return _fallback_explain(p) | {"source": f"template ({verdict_note(verdict)})", "check": verdict}
+        return out | {"source": f"Gemini ({settings.gemini_model}); {verdict_note(verdict)}", "check": verdict}
     except Exception as e:
         log.warning("Gemini plan explanation failed: %s", e)
         return _fallback_explain(p) | {"source": f"template (Gemini error: {_why(e)})"}

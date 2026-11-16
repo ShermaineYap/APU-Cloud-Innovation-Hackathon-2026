@@ -598,6 +598,57 @@ def campus_all_rooms(at: str | None = None):
     return campus_day(when)
 
 
+# --- the agent team: coordinator, roster, runs, and the scheduled run ----------------------------
+
+class TeamRequest(BaseModel):
+    message: str = Field(min_length=3, max_length=500)
+
+
+@app.post("/api/agent")
+def agent_team(body: TeamRequest):
+    """One request to the whole team: the coordinator decides which specialists to call, in what order."""
+    from .a2a import route, run_skill
+    from .agent.team import coordinate
+    run = coordinate(body.message, run_skill, route, via="CampusPulse app")
+    return {k: run[k] for k in ("message", "reply", "steps", "source", "skills", "ms", "at")} | {
+        "sql": run["data"].get("sql"), "plan_id": run["data"].get("plan_id")}
+
+
+@app.get("/api/agents")
+def agent_roster():
+    """Who is on the team, the prompt each one runs on, and what the team did recently."""
+    from .agent.team import RUNS, roster
+    return {"agents": roster(), "runs": list(RUNS), "scheduled": state.get("nightly"),
+            "patterns": ["Coordinator", "Sequential pipeline", "Iterative refinement", "Generator and critic",
+                         "Human in the loop"]}
+
+
+@app.post("/api/autopilot/nightly")
+def autopilot_nightly(key: str = "", apply: str = "safe", x_device_key: str = Header(default="")):
+    """The run nobody presses a button for (Cloud Scheduler calls this each evening): plan the next
+    teaching day, apply the changes that are safe, hold the rest for a person, draft the notices."""
+    if not hmac.compare_digest(key or x_device_key, settings.ingest_key):
+        raise HTTPException(401, "bad key")
+    p = autopilot_plan(PlanRequest(instructions=""))
+    out = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "day": p["day_label"],
+           "saving_kwh": round(p["saving"]["kwh"]), "saving_pct": round(p["saving"]["pct"] * 100),
+           "auto_moves": p["auto_moves"], "held_for_person": p["review_moves"], "applied": False,
+           "headline": p["explanation"].get("headline", "")}
+    if apply == "safe":
+        done = autopilot_apply(ApplyRequest(plan_id=p["id"], approve_review=False, decided_by="Autopilot (scheduled)"))
+        out |= {"applied": True, "rooms": len(done["rooms"]), "notices": len(done["notices"]["notices"])}
+    state["nightly"] = out
+    from .agent.team import RUNS
+    RUNS.appendleft({"at": out["at"], "message": "Scheduled run: plan the next teaching day", "via": "Cloud Scheduler",
+                     "reply": out["headline"], "source": "no person involved", "ms": None, "steps": [
+                         {"agent": "Scheduler", "did": "started Autopilot on its own", "detail": p["day_label"], "ok": True},
+                         {"agent": "Autopilot", "did": "planned, checked and explained the day",
+                          "detail": f"{out['saving_kwh']} kWh ({out['saving_pct']}%)", "ok": True},
+                         {"agent": "Autopilot", "did": "applied the safe changes" if out["applied"] else "proposed only",
+                          "detail": f"{out['auto_moves']} automatic, {out['held_for_person']} held for a person", "ok": True}]})
+    return out
+
+
 # Gemini Enterprise (A2A agent) and the Google Sheets / Calendar exports.
 from . import a2a, google_tools  # noqa: E402
 

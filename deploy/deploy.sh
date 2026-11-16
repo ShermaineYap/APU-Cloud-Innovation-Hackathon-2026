@@ -35,6 +35,9 @@ grep -q '^INGEST_KEY=' .deploy.env || echo "INGEST_KEY=$INGEST_KEY" >> .deploy.e
 if [[ -z "${GEMINI_API_KEY:-}" && -f .env ]]; then
   GEMINI_API_KEY="$( (grep -E '^GEMINI_API_KEY=' .env || true) | tail -1 | cut -d= -f2- | tr -d '"'"'"' ')"
 fi
+# USE_VERTEX=1 runs Gemini on Google Cloud (Gemini Enterprise Agent Platform, formerly Vertex AI) with the
+# service account instead of the AI Studio key: no key to leak and no 15-requests-a-minute free-tier cap.
+if [[ -n "${USE_VERTEX:-}" ]]; then GEMINI_API_KEY=""; fi
 GEMINI_MODEL="${CP_GEMINI_MODEL:-gemini-3.5-flash-lite}"
 
 gcloud config set project "$PROJECT_ID" >/dev/null
@@ -101,6 +104,19 @@ if gcloud pubsub subscriptions describe campuspulse-push >/dev/null 2>&1; then
 else
   gcloud pubsub subscriptions create campuspulse-push --topic "$TOPIC" --push-endpoint "$PUSH" \
     --ack-deadline 30 --message-retention-duration 1h >/dev/null
+fi
+
+# The run nobody presses a button for: Cloud Scheduler starts Autopilot every evening (3 jobs are free).
+if [[ -n "${NIGHTLY:-}" ]]; then
+  gcloud services enable cloudscheduler.googleapis.com >/dev/null
+  NIGHT="$URL/api/autopilot/nightly?key=$INGEST_KEY"
+  if gcloud scheduler jobs describe campuspulse-nightly --location "$REGION" >/dev/null 2>&1; then
+    gcloud scheduler jobs update http campuspulse-nightly --location "$REGION" --uri "$NIGHT" >/dev/null
+  else
+    gcloud scheduler jobs create http campuspulse-nightly --location "$REGION" --schedule "0 18 * * 1-5" \
+      --time-zone "Asia/Kuala_Lumpur" --uri "$NIGHT" --http-method POST --attempt-deadline 180s >/dev/null
+  fi
+  echo "Scheduled: Autopilot runs on its own at 18:00 on teaching days (job campuspulse-nightly)"
 fi
 
 grep -q '^URL=' .deploy.env && sed -i.bak "s#^URL=.*#URL=$URL#" .deploy.env && rm -f .deploy.env.bak \

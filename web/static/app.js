@@ -472,14 +472,68 @@ async function loadNetwork() {
       : "No gateway outages in the last 7 days."} Showing the ${nodes.length} least trusted of ${n.nodes.length} nodes.</p>`;
 }
 
+/* ---------- the agent team ---------- */
+const TEAM_EXAMPLES = [
+  "Why is Auditorium 2 wasting energy, and what should we do about it tomorrow?",
+  "How is the campus doing this week?",
+  "Plan tomorrow, comfort first, at most 5 moves",
+];
+const KIND = { llm: "Gemini agent", solver: "Solver", rule: "Rule check" };
+function stepsHtml(steps) {
+  return `<ol class="trace">${(steps || []).map((s) => `<li class="${s.ok === false ? "bad" : ""}">
+      <b>${esc(s.agent)}</b> <span>${esc(s.did)}</span>${s.ms ? ` <span class="ms">${(s.ms / 1000).toFixed(1)} s</span>` : ""}
+      ${s.detail ? `<code>${esc(s.detail)}</code>` : ""}</li>`).join("")}</ol>`;
+}
+async function loadTeam() {
+  const d = await api("/api/agents");
+  $("#roster-hint").textContent = `${d.agents.length} members, working in ${d.patterns.length} patterns: ${d.patterns.join(", ").toLowerCase()}. Open a card to read the prompt an agent runs on.`;
+  $("#roster").innerHTML = d.agents.map((a) => `<li class="agent ${esc(a.kind)}">
+      <div class="int-top"><b>${esc(a.name)}</b><span class="badge ${a.kind === "llm" ? "on" : "ready"}">${KIND[a.kind] || esc(a.kind)}</span></div>
+      <p class="pattern">${esc(a.pattern)} · ${esc(a.model)}</p>
+      <p>${esc(a.job)}</p>
+      <p class="guard"><b>Guardrail:</b> ${esc(a.guardrail)}</p>
+      ${a.tools.length ? `<p class="tools">Tools: ${a.tools.map((t) => `<code>${esc(t)}</code>`).join(" ")}</p>` : ""}
+      ${a.prompt ? `<details><summary>Read its prompt</summary><pre class="prompt">${esc(a.prompt)}</pre></details>` : ""}
+    </li>`).join("");
+  const sched = d.scheduled
+    ? `Last scheduled run: ${esc(d.scheduled.day)}, ${d.scheduled.saving_kwh} kWh (${d.scheduled.saving_pct}%), ${d.scheduled.applied ? "safe changes applied" : "proposed only"}, ${d.scheduled.held_for_person} held for a person. `
+    : "";
+  $("#runs-hint").textContent = sched + "Requests from this app, from Gemini Enterprise, and the scheduled run.";
+  $("#runs").innerHTML = d.runs.length ? d.runs.slice(0, 6).map((r) => `<li>
+      <details><summary><b>${esc(r.message)}</b> <span class="src">${esc(r.via || "")} · ${new Date(r.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${(r.steps || []).length} steps</span></summary>
+      <p>${esc(r.reply || "")}</p>${stepsHtml(r.steps)}</details></li>`).join("")
+    : `<li class="empty">No runs yet. Ask the team something above.</li>`;
+}
+async function askTeam(q) {
+  const box = $("#team-run"), btn = $("#team-form button");
+  btn.disabled = true; box.hidden = false;
+  box.innerHTML = `<p class="text">The coordinator is deciding who to call…</p>`;
+  try {
+    const r = await api("/api/agent", { method: "POST", body: JSON.stringify({ message: q }) });
+    box.innerHTML = `<p class="text">${esc(r.reply).replaceAll("\n", "<br>")}</p>
+      <p class="src">${esc(r.source)} · ${r.skills.length} specialist${r.skills.length === 1 ? "" : "s"} called · ${(r.ms / 1000).toFixed(1)} s</p>
+      <h3>How the team got there</h3>${stepsHtml(r.steps)}
+      ${r.sql ? `<pre class="sql">${esc(r.sql)}</pre>` : ""}
+      ${r.plan_id ? `<p><button type="button" class="ghost" data-goto-plan>Open this plan in Autopilot to approve it</button></p>` : ""}`;
+    box.querySelector("[data-goto-plan]")?.addEventListener("click", () => { apPlan = null; showTab("autopilot"); });
+    loadTeam().catch(() => {});
+  } catch (e) {
+    box.innerHTML = `<p class="text">The request did not go through: ${esc(e.message)}. Try again in a moment.</p>`;
+  } finally { btn.disabled = false; }
+}
+$("#team-form").addEventListener("submit", (e) => { e.preventDefault(); const q = $("#team-q").value.trim(); if (q.length >= 3) askTeam(q); });
+$("#team-examples").innerHTML = TEAM_EXAMPLES.map((q) => `<button type="button" class="chip-btn">${esc(q)}</button>`).join("");
+$("#team-examples").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { $("#team-q").value = b.textContent; askTeam(b.textContent); }));
+
 /* ---------- tabs ---------- */
-const TABS = ["today", "autopilot", "actions", "students", "data"];
+const TABS = ["today", "autopilot", "agents", "actions", "students", "data"];
 function showTab(name, push = true) {
   if (!TABS.includes(name)) name = "today";
   document.querySelectorAll("[role=tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
   document.querySelectorAll(".tab-panel").forEach((p) => (p.hidden = p.dataset.panel !== name));
   if (push) history.replaceState(null, "", `${location.pathname}${location.search}#${name}`);
   if (name === "autopilot" && !apPlan && !apBusy) loadLatestPlan();
+  if (name === "agents") loadTeam().catch((e) => toast(e.message));
   window.scrollTo({ top: 0 });
 }
 document.querySelectorAll("[role=tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));

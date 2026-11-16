@@ -20,6 +20,7 @@
     <nav class="tabs" role="tablist" aria-label="Sections">
       <button type="button" role="tab" data-tab="today" aria-selected="true">Today</button>
       <button type="button" role="tab" data-tab="autopilot" aria-selected="false">Autopilot <span class="new">plan</span></button>
+      <button type="button" role="tab" data-tab="agents" aria-selected="false">Agents <span class="new">team</span></button>
       <button type="button" role="tab" data-tab="actions" aria-selected="false">Actions <span class="count" id="actions-count" hidden></span></button>
       <button type="button" role="tab" data-tab="students" aria-selected="false">Students</button>
       <button type="button" role="tab" data-tab="data" aria-selected="false">Data</button>
@@ -187,6 +188,37 @@
       </div>
       <p class="study-msg" id="study-msg"></p>
       <ol id="study" class="study-list"></ol>
+    </section>
+
+    <!-- AGENTS: the team, their prompts, and what they just did -->
+    <section class="tab-panel" data-panel="agents" role="tabpanel" aria-labelledby="team-title" hidden>
+      <div class="team-ask">
+        <div class="section-head">
+          <h2 id="team-title">Ask the agent team</h2>
+          <p class="hint">A coordinator agent decides which specialists to call, in what order. Every step shows below.</p>
+        </div>
+        <form id="team-form" class="ask-form">
+          <label for="team-q" class="visually-hidden">Request for the agent team</label>
+          <input id="team-q" autocomplete="off" placeholder="Why is Auditorium 2 wasting energy, and what should we do about it tomorrow?" required minlength="3">
+          <button type="submit" class="solid">Ask the team</button>
+        </form>
+        <div id="team-examples" class="suggestions"></div>
+        <div id="team-run" class="team-run" hidden></div>
+      </div>
+      <div class="team-roster">
+        <div class="section-head">
+          <h2 id="roster-title">Who is on the team</h2>
+          <p class="hint" id="roster-hint">Each agent has one job, its own prompt and a guardrail. Open a card to read the prompt it runs on.</p>
+        </div>
+        <ul id="roster" class="roster" aria-labelledby="roster-title"></ul>
+      </div>
+      <div class="team-log">
+        <div class="section-head">
+          <h2 id="runs-title">What the team did recently</h2>
+          <p class="hint" id="runs-hint">Requests from this app, from Gemini Enterprise, and the scheduled run.</p>
+        </div>
+        <ul id="runs" class="runs" aria-labelledby="runs-title"></ul>
+      </div>
     </section>
 
     <!-- DATA: explore and trust -->
