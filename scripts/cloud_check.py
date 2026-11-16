@@ -188,6 +188,19 @@ def service_checks(url: str, key: str | None) -> None:
         assert d["forecast_method"].startswith("BigQuery ML"), d["forecast_method"]
         return d["forecast_method"]
 
+    @check("Gemini Enterprise A2A agent card")
+    def _():
+        c = http.get(f"{url}/.well-known/agent-card.json").json()
+        assert c["url"].startswith("https://"), c["url"]
+        return f"{c['name']}: {', '.join(s['id'] for s in c['skills'])}"
+
+    @check("A2A message/send (what Gemini Enterprise calls)")
+    def _():
+        r = http.post(f"{url}/a2a", json={"jsonrpc": "2.0", "id": 1, "method": "message/send", "params": {
+            "message": {"role": "user", "messageId": "check", "parts": [{"kind": "text", "text": "Give me the morning brief"}]}}}).json()
+        assert "result" in r, r
+        return r["result"]["parts"][0]["text"][:70]
+
     @check("Estates report PDF")
     def _():
         r = http.get(f"{url}/api/report.pdf")
