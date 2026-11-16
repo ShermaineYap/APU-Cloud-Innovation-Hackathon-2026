@@ -73,7 +73,7 @@ def agent_card(base_url: str) -> dict:
         "url": f"{base_url}/a2a",
         "preferredTransport": "JSONRPC",
         "version": __version__,
-        "provider": {"organization": "Chicken Biryani, Asia Pacific University", "url": base_url},
+        "provider": {"organization": "What's Google?, Asia Pacific University", "url": base_url},
         "capabilities": {"streaming": False, "pushNotifications": False, "stateTransitionHistory": False},
         "defaultInputModes": ["text/plain"],
         "defaultOutputModes": ["text/plain", "application/json"],
