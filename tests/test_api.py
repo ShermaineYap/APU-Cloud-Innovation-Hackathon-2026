@@ -102,16 +102,12 @@ def test_replayed_dataset_is_labelled_not_live():
         assert o["mode"]["replay_online"] is True and o["mode"]["replay_device"] == "replay-uci-occupancy"
 
 
-def test_replay_script_reads_the_bundled_real_dataset():
-    import importlib.util
-    from pathlib import Path
-    spec = importlib.util.spec_from_file_location("replay", Path(__file__).resolve().parents[1] / "scripts" / "replay_dataset.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    rows = mod.load(mod.DATA, "2015-02-09 07:30")
+def test_dataset_rows_read_through_campuspulse_rules():
+    from campuspulse import replay
+    rows = replay.load("2015-02-09 07:30")
     assert len(rows) > 4000 and rows[0]["ts"] >= "2015-02-09 07:30"
-    body = mod.payload(rows[0], "replay-uci-occupancy", "B-08-05")
-    assert body["device_id"].startswith("replay-") and "rssi_dbm" not in body and 300 < body["co2_ppm"] < 3000
+    states = {replay.reading(r)["status"] for r in rows}
+    assert {"in_use", "stale_air", "idle"} <= states  # the real data contains each case
 
 
 def test_caption_and_report():
@@ -163,24 +159,27 @@ def test_study_finder_lists_free_rooms_and_closes_at_night():
         assert not night["open"] and night["rooms"] == []
 
 
-def test_built_in_replay_switch_streams_real_data_and_stops():
-    from datetime import datetime, timedelta, timezone
+def test_published_dataset_plays_in_its_own_room_not_an_apu_room():
+    from datetime import timedelta
     from campuspulse.replay import replayer
     with client() as c:
+        before = next(x for x in c.get("/api/overview").json()["rooms"] if x["room_id"] == "B-08-05")
         m = c.post("/api/source", json={"mode": "replay", "preset": "stale", "every_s": 2}).json()
-        assert m["source"] == "replay" and m["replay"]["running"] and m["replay"]["rows_sent"] == 1
-        assert m["replay"]["reading"]["co2_ppm"] > 300 and "Belgium" in m["replay"]["source"]
-        # Rows fall due with the clock, not a thread: pretend 10 s have passed.
-        replayer.run["started"] -= timedelta(seconds=10)
-        assert c.get("/api/source").json()["replay"]["rows_sent"] == 6
-        room = next(x for x in c.get("/api/overview").json()["rooms"] if x["room_id"] == "B-08-05")
-        assert room["replayed"] is True and room["simulated"] is False and room["co2_ppm"] > 300
-        # A long gap sends only the latest rows, never a flood.
-        replayer.run["started"] = datetime.now(timezone.utc) - timedelta(hours=2)
-        assert len(replayer.due()) <= 12
-        m = c.post("/api/source", json={"mode": "esp32"}).json()
-        assert not m["replay"]["running"] and m["source"] != "replay"
-        assert c.post("/api/source", json={"mode": "replay", "room": "Z-9"}).status_code == 422
+        rp = m["replay"]
+        assert m["source"] == "replay" and rp["running"] and rp["site"]["name"].startswith("Office room, Mons")
+        assert rp["reading"]["occupied"] and rp["reading"]["co2_ppm"] > 300 and rp["reading"]["light_lux"] >= 0
+        # The position follows the clock, not a thread: pretend two minutes have passed (60 rows of 5 min).
+        replayer.run["started"] -= timedelta(seconds=120)
+        rp = c.get("/api/source").json()["replay"]
+        assert rp["rows_shown"] == 61 and len(rp["history"]) == 61
+        assert rp["tally"]["stale_air_min"] > 0 and rp["tally"]["max_co2_ppm"] > 1000
+        # Nothing reaches APU's rooms or the warehouse.
+        after = next(x for x in c.get("/api/overview").json()["rooms"] if x["room_id"] == "B-08-05")
+        assert after["device_id"] == before["device_id"] and not after.get("replayed")
+        assert get_store().query("SELECT COUNT(*) AS n FROM readings WHERE room_id = 'B-08-05' "
+                                 "AND device_id LIKE 'replay-%'")["n"][0] == 0
+        m = c.post("/api/source", json={"mode": "simulation"}).json()
+        assert not m["replay"]["running"]
 
 
 def test_esp32_reading_switches_source_to_live():

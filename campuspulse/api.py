@@ -341,7 +341,8 @@ def overview(at: str | None = None):
             replay = replay.tz_convert(settings.timezone).tz_localize(None)
         replay = replay.floor("min")
     key = f"overview:{replay.isoformat() if replay is not None else 'live'}"
-    return cache.get(key, 600 if replay is not None else 20, lambda: _overview(replay))
+    # The cached part is the warehouse work; which real source is on show is always answered fresh.
+    return cache.get(key, 600 if replay is not None else 20, lambda: _overview(replay)) | {"mode": _mode()}
 
 
 def _overview(replay: pd.Timestamp | None) -> dict:
@@ -588,48 +589,32 @@ async def catch_up_simulation(request: Request, call_next):
     """Request mode (Cloud Run free tier): bring simulated readings up to now before answering."""
     path = request.url.path
     if path.startswith(("/api/", "/a2a")) and not path.startswith(("/api/ingest", "/api/pubsub")):
-        if replayer.run is not None:
-            await run_in_threadpool(_replay_tick)
         if settings.sim_mode == "request":
             await run_in_threadpool(_catch_up)
     return await call_next(request)
-
-
-def _replay_tick() -> None:
-    """Feed the rows of the built-in dataset replay that are due by now, through the normal ingest path."""
-    try:
-        rows = replayer.due()
-        if rows:
-            _accept([Reading.model_validate(p).to_row() for p in rows])
-    except Exception:  # the replay must never break the dashboard
-        log.exception("dataset replay tick failed")
 
 
 class SourceRequest(BaseModel):
     mode: Literal["simulation", "esp32", "replay"]
     preset: str = "arrival"
     every_s: float = Field(default=3.0, ge=1.0, le=60.0)
-    room: str = LIVE_ROOM
 
 
 @app.get("/api/source")
 def data_source():
-    """Where B-08-05's readings come from right now: the simulator, the ESP32 node, or the dataset replay."""
+    """Which real data is on show: our ESP32 node in B-08-05, or the published dataset in its own room."""
     return _mode()
 
 
 @app.post("/api/source")
 def set_data_source(body: SourceRequest):
-    """Switch the real-data source from the dashboard. "replay" starts the built-in dataset replay;
-    "esp32" and "simulation" stop it (the ESP32 shows as live by itself as soon as it reports)."""
-    if body.room not in ROOM_BY_ID:
-        raise HTTPException(422, f"unknown room_id {body.room}")
+    """Switch the real-data view from the dashboard. "replay" plays the published dataset as its own site
+    (an office in Mons, Belgium), never inside an APU room; "esp32" and "simulation" stop it. The ESP32
+    shows as live by itself as soon as it reports."""
     if body.mode == "replay":
-        replayer.start(body.room, body.preset, body.every_s)
-        _replay_tick()  # the first reading lands now, not after the first interval
+        replayer.start(body.preset, body.every_s)
     else:
         replayer.stop()
-    cache.drop("overview")
     return _mode()
 
 

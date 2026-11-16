@@ -62,6 +62,62 @@ function readingChips(r) {
   return `<div class="readings">${chips.map((c) => `<span>${c}</span>`).join("")}</div>`;
 }
 
+const DS_STATUS = { in_use: ["In use", TEAL], stale_air: ["CO₂ over limit", AMBER], lit_empty: ["Lights on, nobody in", BLUE], idle: ["Empty, lights off", MUTED] };
+
+// A schematic of the dataset's office: one room, its sensor node and the camera that recorded who was in.
+// Not to scale and no invented furniture: the study's own floor plan is not reproduced.
+function datasetRoom(rp) {
+  const r = rp.reading, t = rp.tally || {};
+  const [label, colour] = DS_STATUS[r.status] || DS_STATUS.idle;
+  const lit = r.light_lux >= 300;
+  const person = (x) => `<g transform="translate(${x} 112)" fill="${INK}"><circle r="9" cy="-14"/><path d="M-13 18 Q-13 -2 0 -2 Q13 -2 13 18Z"/></g>`;
+  const svg = `<svg viewBox="0 0 320 190" class="ds-room" role="img" aria-label="Office room: ${esc(label)}">
+    <rect x="10" y="10" width="300" height="170" rx="4" fill="${colour}" fill-opacity="${r.status === "idle" ? 0.08 : 0.18}" stroke="${INK}" stroke-width="2"/>
+    <line x1="30" y1="180" x2="80" y2="180" stroke="#F4F5F2" stroke-width="5"/>
+    <text x="55" y="173" text-anchor="middle" font-size="10" fill="${MUTED}">door</text>
+    <g transform="translate(160 34)"><circle r="${lit ? 15 : 9}" fill="${lit ? "#F2C14E" : RULE}"/>
+      <text y="30" text-anchor="middle" font-size="10" fill="${MUTED}">light ${fmt(r.light_lux)} lux</text></g>
+    <g transform="translate(270 40)"><rect x="-14" y="-9" width="22" height="16" rx="3" fill="${INK}"/><path d="M8 -4 L16 -8 L16 6 L8 2Z" fill="${INK}"/>
+      <text x="-2" y="22" text-anchor="middle" font-size="10" fill="${MUTED}">camera</text></g>
+    <g transform="translate(54 50)"><rect x="-26" y="-14" width="52" height="28" rx="4" fill="#F4F5F2" stroke="${INK}"/>
+      <text y="4" text-anchor="middle" font-size="10" font-weight="600" fill="${INK}">sensors</text>
+      <text y="28" text-anchor="middle" font-size="9" fill="${MUTED}">T · RH · lux · CO₂</text></g>
+    ${r.occupied ? person(140) + person(180) : ""}
+    <text x="160" y="160" text-anchor="middle" font-size="13" font-weight="600" fill="${INK}">${esc(label)}</text>
+  </svg>`;
+  return `<div class="ds-grid">
+    <figure class="ds-figure">${svg}<figcaption>Schematic, not to scale.${r.occupied ? " Occupied or not only: the data has no head count." : ""}</figcaption></figure>
+    <div class="ds-side">
+      <p class="state replay"><span class="dot"></span>Measured ${datasetTime(r.ts)}</p>
+      ${readingChips({ temp_c: r.temp_c, humidity_pct: r.humidity_pct, co2_ppm: r.co2_ppm, occupied: r.occupied })}
+      <div class="readings"><span>Light <b>${fmt(r.light_lux)} lux</b></span></div>
+      <p class="hint">CampusPulse's rules over the ${fmt((t.minutes || 0) / 60, 1)} h replayed so far: occupied ${fmt((t.occupied_min || 0) / 60, 1)} h,
+        CO₂ over ${fmt(rp.co2_limit_ppm)} ppm for <b>${fmt(t.stale_air_min)} min</b> (peak ${fmt(t.max_co2_ppm)} ppm),
+        lights on with nobody in for <b>${fmt(t.lit_empty_min)} min</b>.</p>
+      <p class="hint">${esc(rp.story || "")}</p>
+    </div>
+  </div>`;
+}
+
+function drawDatasetChart(rp) {
+  const canvas = $("#rp-chart");
+  if (!canvas || !rp.running || !(rp.history || []).length) return;
+  canvas.parentElement.hidden = false;
+  const h = rp.history;
+  chart(canvas, {
+    type: "line",
+    data: { labels: h.map((x) => String(x.ts).slice(11, 16)), datasets: [
+      { label: "CO₂ (ppm)", data: h.map((x) => x.co2_ppm), borderColor: TEAL, borderWidth: 2, pointRadius: 0, tension: 0.25, yAxisID: "y" },
+      { label: `Limit ${rp.co2_limit_ppm} ppm`, data: h.map(() => rp.co2_limit_ppm), borderColor: AMBER, borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0, yAxisID: "y" },
+      { label: "Light (lux)", data: h.map((x) => x.light_lux), borderColor: "#C9A227", borderWidth: 1.5, pointRadius: 0, stepped: true, yAxisID: "y1" },
+    ] },
+    options: { animation: false, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+      plugins: { legend: { display: true, position: "bottom", labels: { boxWidth: 12 } } },
+      scales: { x: { ticks: { maxTicksLimit: 8 } }, y: { title: { display: true, text: "CO₂ ppm" }, suggestedMin: 400 },
+        y1: { position: "right", grid: { drawOnChartArea: false }, title: { display: true, text: "lux" }, suggestedMin: 0 } } },
+  });
+}
+
 function renderSource(m) {
   if (!m || !m.replay) return;
   if (sourceChoice === null) sourceChoice = m.source || "simulation";
@@ -78,30 +134,36 @@ function renderSource(m) {
          ${readingChips(e.reading)}
          <p class="hint">Real measurements from our board on stage. Approve an AC change for ${esc(room)} (Actions or Autopilot) and the board's AC relay follows it.</p>`
       : `<p class="state wait"><span class="dot"></span>Waiting for the ESP32 node in ${esc(room)}…${e.last_seen ? ` last heard ${fmt(e.seconds_ago)} s ago` : ""}</p>
-         <p class="hint">The board posts to <code>${esc(location.origin)}/api/ingest</code> every 5 s with the ingest key (firmware/campuspulse_board). This turns green on its first reading. If the board can't connect, switch to <b>Real dataset replay</b>.</p>`;
+         <p class="hint">The board posts to <code>${esc(location.origin)}/api/ingest</code> every 5 s with the ingest key (firmware/campuspulse_board). This turns green on its first reading. If the board can't connect, switch to <b>Published dataset</b>.</p>`;
   } else if (sourceChoice === "replay") {
     const presetOpts = Object.entries(rp.presets || {}).map(([k, v]) => `<option value="${k}" ${k === (rp.preset || "arrival") ? "selected" : ""}>${esc(v)}</option>`).join("");
     const speedOpts = SPEEDS.map(([v, t]) => `<option value="${v}" ${v === (rp.every_s || 3) ? "selected" : ""}>${t}</option>`).join("");
-    const live = rp.running
-      ? `<p class="state replay"><span class="dot"></span>Replaying real measured data into ${esc(rp.room)}${rp.dataset_time ? ` · measured ${datasetTime(rp.dataset_time)}` : ""}</p>${readingChips(rp.reading)}`
-      : `<p class="state"><span class="dot"></span>Replay stopped. Press Start to stream the dataset into ${esc(room)}.</p>`;
+    const site = rp.site || {};
+    const live = rp.running ? datasetRoom(rp) : `<p class="state"><span class="dot"></span>Press Start to play the published dataset in its own room.</p>`;
     // Keep the controls in place between refreshes, so an open dropdown is not redrawn under the presenter.
     if (body.dataset.view === `replay-${rp.running}` && $("#rp-live")) {
       $("#rp-live").innerHTML = live;
+      drawDatasetChart(rp);
       return startSourcePoll();
     }
     body.dataset.view = `replay-${rp.running}`;
-    body.innerHTML = `<div id="rp-live">${live}</div>
+    body.innerHTML = `<div class="ds-head"><b>${esc(site.name || "Published dataset")}</b>
+        <span>${esc(site.study || "")} · measured ${esc(site.period || "")} · ${esc(site.licence || "")}</span></div>
+      <div id="rp-live">${live}</div>
+      <div class="ds-chart" ${rp.running ? "" : "hidden"}><canvas id="rp-chart" aria-label="CO2 and light over the replayed hours"></canvas></div>
       <div class="controls">
         <label class="visually-hidden" for="rp-preset">Where to start</label><select id="rp-preset">${presetOpts}</select>
         <label class="visually-hidden" for="rp-speed">Speed</label><select id="rp-speed">${speedOpts}</select>
         <button type="button" class="ghost" id="rp-start">${rp.running ? "Restart" : "Start"}</button>
       </div>
-      <p class="hint">${esc(rp.source || "")}. Real sensor readings, but not APU's and not live: the room is tagged "real data, replayed".</p>`;
+      <p class="hint">Someone else's real measurements, shown in their own room, not an APU room: ${esc((site.sensors || []).join(", "))}.
+        ${esc(site.ground_truth || "")}. ${esc(site.resampled || "")}. ${esc(site.not_in_data || "")}.
+        Source: <a href="${esc(site.doi || "#")}" target="_blank" rel="noopener">${esc(rp.source || "")}</a>.</p>`;
     $("#rp-start").addEventListener("click", () => setSource("replay"));
+    drawDatasetChart(rp);
   } else {
     body.dataset.view = "";
-    body.innerHTML = `<p class="state"><span class="dot"></span>Simulated: ${esc(room)} follows APU's real timetable and KL weather, like the other 19 rooms.</p>`;
+    body.innerHTML = `<p class="state"><span class="dot"></span>Off: no real data on show. ${esc(room)} is simulated from APU's real timetable and KL weather, like the other 19 rooms.</p>`;
   }
   startSourcePoll();
 }
@@ -134,7 +196,7 @@ async function setSource(choice) {
     sourceChoice = choice;
     renderSource(await api("/api/source", { method: "POST", body: JSON.stringify(body) }));
     await loadOverview();
-    toast(choice === "replay" ? "Replaying the real dataset into the room." : choice === "esp32" ? "Listening for the ESP32 node." : "Back to the simulated room.");
+    toast(choice === "replay" ? "Playing the published dataset in its own room." : choice === "esp32" ? "Listening for the ESP32 node." : "Real-data view off.");
   } catch (e) {
     toast(e.message);
   } finally {
@@ -147,7 +209,7 @@ document.querySelectorAll("[data-source]").forEach((b) => b.addEventListener("cl
 function renderStatus(m) {
   const live = m.live_node_online;
   if (m.replay_online && !live) {
-    $("#status").innerHTML = `<span class="dot on"></span>Replaying real measured sensor data (${esc(m.replay_device || "dataset")}); other rooms simulated`;
+    $("#status").innerHTML = `<span class="dot on"></span>Showing a published real dataset (office in Mons, Belgium); APU rooms simulated`;
     return renderStatusFoot(m);
   }
   $("#status").innerHTML = `<span class="dot ${live ? "on" : ""}"></span>${
@@ -158,7 +220,7 @@ function renderStatus(m) {
 
 function renderStatusFoot(m) {
   $("#foot-mode").textContent =
-    `Data: ${m.source === "esp32" ? `live ESP32 node in ${m.live_room}` : m.source === "replay" ? `real dataset replayed into ${m.live_room}` : "no real node reporting"} + 20 real APU rooms on their real timetable, other sensors simulated (labelled). Store: ${m.backend === "bigquery" ? "BigQuery" : "local DuckDB"}. ` +
+    `Data: ${m.source === "esp32" ? `live ESP32 node in ${m.live_room}` : m.source === "replay" ? "a published dataset in its own room (Mons office)" : "no real node reporting"} + 20 real APU rooms on their real timetable, other sensors simulated (labelled). Store: ${m.backend === "bigquery" ? "BigQuery" : "local DuckDB"}. ` +
     `AI: ${m.gemini ? `Gemini ${m.model}` : "offline mode (no Gemini key)"}. Assumptions: energy RM ${m.tariff_rm_per_kwh}/kWh, grid carbon ${m.grid_kg_co2e_per_kwh} kg CO₂e/kWh.`;
   $("#ask-mode").textContent = m.gemini
     ? "Gemini writes the SQL, CampusPulse checks it is read-only, the warehouse runs it."

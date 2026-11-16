@@ -5,14 +5,12 @@ The dashboard's **Today** tab has a card called **"Real data in B-08-05"** with 
 | Switch | What feeds B-08-05 | What you need |
 |---|---|---|
 | **ESP32 + DHT22 sensor** | Our own board: real temperature, humidity, occupancy (BOOT button or PIR), Wi-Fi signal, and the AC relay (LED) obeying CampusPulse | The board flashed with this sketch, plus a phone hotspot |
-| **Real dataset replay** (fallback) | Real measured CO2, temperature, humidity and occupancy from a published study (UCI, Belgium 2015), replayed by the server itself | Nothing: one click |
-| **Simulated** | The simulator, like the other 19 rooms | Nothing |
+| **Published dataset (Mons office)** (fallback) | Not an APU room: the study's own office in Mons, Belgium, with its real measured CO2, temperature, humidity, light and occupancy (UCI, 2015) | Nothing: one click |
+| **Off** | No real data on show; B-08-05 is simulated like the other 19 rooms | Nothing |
 
 Both real modes work **on the Cloud Run URL and on a laptop**, with no bridge and no extra terminal.
-- The board posts straight to the server over HTTPS.
-- The replay runs inside the server.
-
-The room is tagged **"live"** (ESP32) or **"real data, replayed"** (dataset), never mixed up.
+- The board posts straight to the server over HTTPS, and B-08-05 is tagged **"live"**.
+- The dataset plays inside the server, in **its own room view** (the study's office), never inside an APU room.
 
 ---
 
@@ -82,22 +80,24 @@ const char *INGEST_KEY = "PASTE_THE_INGEST_KEY_HERE";
 
 ---
 
-## Mode 2: real dataset replay (the fallback)
+## Mode 2: published dataset (the fallback)
 
-On the dashboard, click **Real dataset replay**. That's it, and it works on the cloud URL too.
+On the dashboard, click **Published dataset (Mons office)**. That's it, and it works on the cloud URL too.
 
-- The server streams genuinely measured readings into B-08-05, one 5-minute row every 3 s by default.
+- The card turns into the study's own room: a schematic of the office (sensor node, light, the camera that
+  recorded occupancy), the live readings, a CO2 and light chart, and CampusPulse's rules applied to it
+  (minutes with CO2 over 1,000 ppm, and lights on with nobody in).
+- APU's rooms are untouched: B-08-05 stays simulated, and nothing is written to the warehouse.
+- One 5-minute row plays every 3 s by default.
 - The data is the UCI Occupancy Detection dataset: an office in Mons, Belgium, February 2015, licensed CC BY 4.0. Details are in [`campuspulse/data/replay/README.md`](../../campuspulse/data/replay/README.md).
 - Pick a starting point:
   - **Monday morning:** the room fills at 08:40, and CO2 passes 1,000 ppm about 1.5 minutes later on screen. CampusPulse then flags **stale air** on real data.
   - **Monday mid-morning:** CO2 crosses 1,000 ppm within a minute.
   - **Wednesday afternoon:** people arrive and CO2 jumps straight over 1,000 ppm.
-- Use **Restart** to apply a different start or speed. Click **Simulated** or **ESP32** to stop.
-- The replay keeps flowing while the dashboard is open, because it advances on each page refresh. Rows fall due by the clock, so an idle Cloud Run instance doesn't drift.
+- Use **Restart** to apply a different start or speed. Click **Off** or **ESP32** to stop.
+- The position follows the clock, so the replay keeps time even when the page refreshes or Cloud Run is idle between requests.
 
-**Say it straight on stage:** "This is real sensor data from a published office study in Belgium, replayed through our pipeline. It isn't APU data, and the other rooms are simulated." Never call it live.
-
-The laptop script still exists for scripted runs: `.venv/Scripts/python scripts/replay_dataset.py --server <url> --key <key>`.
+**Say it straight on stage:** "No board today, so here is someone else's real data in its own setting: an office in Belgium, measured in 2015. CampusPulse's rules run on it exactly as they would on an APU room. Our APU rooms are simulated until the sensors go in." Never call it live, and never call it APU.
 
 ---
 
@@ -122,4 +122,4 @@ HTTPS mode is simpler and has one less thing to fail, so use MQTT only if the ho
 | `NOT SENT` with no code | Wrong `SERVER_URL`, no internet on the hotspot, or (laptop mode) a firewall blocking port 8000 |
 | Card still says "Waiting for the ESP32" | Check that Serial shows `sent`, and that `ROOM_ID` is `B-08-05` |
 | Temperature shows "–" | Check DATA is on GPIO15 and the pull-up resistor |
-| Anything else in the last 10 minutes | Click **Real dataset replay** |
+| Anything else in the last 10 minutes | Click **Published dataset (Mons office)** |

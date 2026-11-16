@@ -1,8 +1,10 @@
 # Replay datasets: real measured sensor data
 
 These files hold **real measurements from a published dataset**, not APU readings and not
-simulation. `scripts/replay_dataset.py` streams them through CampusPulse as if a sensor node
-were sending them, labelled "real data, replayed" on the dashboard.
+simulation. The dashboard's **Published dataset (Mons office)** view (`campuspulse/replay.py`) plays
+them as their own site: the study's office room, its own sensors and timeline, with CampusPulse's
+room rules applied (occupied, CO2 over the limit, lights on with nobody in). They are never shown
+as an APU room and never written to the warehouse.
 
 ## uci_occupancy_5min.csv
 

@@ -484,3 +484,15 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .source-body select { font: inherit; padding: 0.3rem 0.4rem; border: 1px solid var(--rule); border-radius: var(--radius-ui); background: #fff; max-width: 100%; }
 .source-body .hint { margin: 0; }
 .source-body code { font-size: 0.85rem; background: var(--ground); padding: 0 0.3rem; border-radius: 3px; word-break: break-all; }
+
+/* published dataset shown as its own site */
+.ds-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.75rem; }
+.ds-head b { font: 600 1.15rem/1.2 var(--cond); }
+.ds-head span { color: var(--muted); font-size: 0.85rem; }
+.ds-grid { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 1rem; align-items: start; }
+.ds-figure { margin: 0; }
+.ds-figure figcaption { color: var(--muted); font-size: 0.8rem; margin-top: 0.25rem; }
+.ds-room { width: 100%; height: auto; display: block; }
+.ds-side { display: grid; gap: 0.5rem; }
+.ds-chart { position: relative; height: 220px; }
+@media (max-width: 640px) { .ds-grid { grid-template-columns: 1fr; } }

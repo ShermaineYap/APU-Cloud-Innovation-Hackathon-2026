@@ -32,7 +32,7 @@ REPLAY_PREFIX = "replay-"
 
 
 def is_replay(device_id: str) -> bool:
-    """Real measurements from a published dataset, replayed through the pipeline (scripts/replay_dataset.py)."""
+    """Real measurements from a published dataset, posted to /api/ingest with a replay- device id: labelled, never live. The dashboard's own dataset view (replay.py) does not post anything."""
     return str(device_id).startswith(REPLAY_PREFIX)
 
 
