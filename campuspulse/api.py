@@ -558,7 +558,7 @@ def ask_suggestions():
 async def catch_up_simulation(request: Request, call_next):
     """Request mode (Cloud Run free tier): bring simulated readings up to now before answering."""
     path = request.url.path
-    if (settings.sim_mode == "request" and path.startswith("/api/")
+    if (settings.sim_mode == "request" and path.startswith(("/api/", "/a2a"))
             and not path.startswith(("/api/ingest", "/api/pubsub"))):
         await run_in_threadpool(_catch_up)
     return await call_next(request)
@@ -571,6 +571,13 @@ async def revalidate_web_app(request: Request, call_next):
     if request.url.path == "/" or request.url.path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache"
     return response
+
+
+# Gemini Enterprise (A2A agent) and the Google Sheets / Calendar exports.
+from . import a2a, google_tools  # noqa: E402
+
+app.include_router(a2a.router)
+app.include_router(google_tools.router)
 
 
 @app.get("/")

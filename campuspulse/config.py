@@ -65,6 +65,13 @@ class Settings:
     # Topic prefix: <prefix>/<room_id>/telemetry and /command. Make it unique on a public broker.
     mqtt_prefix: str = field(default_factory=lambda: os.getenv("CP_MQTT_PREFIX", "campuspulse"))
 
+    # Gemini Enterprise: CampusPulse is an A2A agent (a2a.py). Optional bearer key for the endpoint,
+    # the service's public https address for the agent card, and the Gemini Enterprise app it is
+    # registered in (shown in the Integrations panel once set).
+    a2a_key: str | None = field(default_factory=lambda: os.getenv("CP_A2A_KEY") or None)
+    public_url: str | None = field(default_factory=lambda: os.getenv("CP_PUBLIC_URL") or None)
+    gemini_enterprise_app: str | None = field(default_factory=lambda: os.getenv("CP_GEMINI_ENTERPRISE_APP") or None)
+
     ingest_key: str = field(default_factory=lambda: os.getenv("CP_INGEST_KEY", "dev-ingest-key"))
     live_simulator: bool = field(default_factory=lambda: _bool("CP_LIVE_SIM", True))
     # How live simulated readings are produced: "thread" (a loop every 30 s, for a laptop or an

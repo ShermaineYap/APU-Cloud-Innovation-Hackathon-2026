@@ -129,6 +129,12 @@
           <span class="hint" id="ap-apply-hint"></span>
         </div>
         <div id="ap-applied" class="card" hidden></div>
+        <p class="exports" id="ap-exports" hidden>
+          <span class="hint">Share this plan:</span>
+          <a class="chip-btn" id="ap-sheets" target="_blank" rel="noopener">Google Sheets (CSV)</a>
+          <a class="chip-btn" id="ap-calendar" target="_blank" rel="noopener">Add to Google Calendar</a>
+          <button type="button" class="chip-btn" id="ap-formula">Copy Sheets formula</button>
+        </p>
       </div>
     </section>
 
@@ -184,6 +190,13 @@
           <p class="hint">Every recommendation inherits the confidence of the sensors and links behind it.</p>
         </div>
         <div id="network"></div>
+      </div>
+      <div class="integrations">
+        <div class="section-head">
+          <h2 id="int-title">Google Cloud and integrations</h2>
+          <p class="hint">What this deployment runs on, and what is ready to switch on.</p>
+        </div>
+        <ul id="integrations" class="int-list" aria-labelledby="int-title"></ul>
       </div>
     </section>
   </main>

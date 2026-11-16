@@ -123,6 +123,10 @@ curl -X POST localhost:8080/api/ingest -H 'X-Device-Key: dev-ingest-key' -H 'Con
   -d '{"device_id":"esp32-b0805","room_id":"B-08-05","occupied":true,"co2_ppm":812,"temp_c":24.6,"rssi_dbm":-61,"watts":2100}'
 ```
 
+## Google tools and Gemini Enterprise
+
+CampusPulse runs on Cloud Run, BigQuery, BigQuery ML, Pub/Sub and Gemini. It is also an **A2A agent**, ready to register in **Gemini Enterprise**: the agent card is at `/.well-known/agent-card.json` and the three read-only skills (ask the data, plan tomorrow, campus status) answer on `POST /a2a`. Tomorrow's plan exports to **Google Sheets** (`=IMPORTDATA`) and **Google Calendar** (subscribe by URL), and the BigQuery views feed a **Looker Studio** dashboard. Setup for each, including Vertex AI: [docs/GOOGLE_TOOLS.md](docs/GOOGLE_TOOLS.md).
+
 ## Deploy to Google Cloud (free tier)
 
 ```bash
@@ -157,7 +161,7 @@ web/static/         dashboard
 firmware/           ESP32 node (MQTT QoS 1 or HTTPS)
 edge/               YOLO people counter (camera node, optional)
 deploy/, scripts/   Cloud Run deploy, BigQuery setup
-tests/              41 tests: guard, engine finds planted problems, API, camera, control, cloud paths (BigQuery ML, Pub/Sub, catch-up), Gemini loop
+tests/              52 tests: A2A agent and Google exports, guard, engine finds planted problems, Autopilot (constraints, no double booking), API, camera, control, cloud paths (BigQuery ML, Pub/Sub, catch-up), Gemini loop
 ```
 
 ## API
@@ -178,6 +182,11 @@ tests/              41 tests: guard, engine finds planted problems, API, camera,
 | POST | `/api/autopilot/plan` | Plan the next teaching day; body `{"instructions": "..."}` (plain-English goals) |
 | POST | `/api/autopilot/apply` | Carry out a plan: `{"plan_id": "...", "approve_review": false}` |
 | GET | `/api/autopilot/latest` | The last plan |
+| GET | `/.well-known/agent-card.json` | A2A agent card: register CampusPulse in Gemini Enterprise |
+| POST | `/a2a` | A2A JSON-RPC `message/send`: ask the data, plan tomorrow (proposes only), campus status |
+| GET | `/api/integrations` | Google services in use and ready to switch on |
+| GET | `/api/autopilot/latest.csv` | Tomorrow's room changes for Google Sheets (`=IMPORTDATA`) |
+| GET | `/api/autopilot/latest.ics` | Tomorrow's room changes for Google Calendar |
 | GET | `/api/commands` | Device commands sent for approved changes, and each room's AC mode |
 | GET | `/api/rooms/{id}/command` | HTTPS pull of the room's AC mode (header `X-Device-Key`) |
 

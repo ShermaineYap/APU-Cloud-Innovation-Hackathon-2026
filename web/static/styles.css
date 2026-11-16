@@ -384,3 +384,20 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .tab-panel .ask { margin-top: 0; }
 
 .answer[hidden], [hidden] { display: none !important; }
+
+/* ---------- Google Cloud and integrations ---------- */
+.integrations { margin-top: clamp(2rem, 5vw, 3rem); }
+.int-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 0.6rem; }
+.int { background: var(--panel); border: 1px solid var(--rule); border-left: 4px solid var(--rule); border-radius: var(--radius-ui); padding: 0.7rem 0.85rem; display: grid; gap: 0.3rem; align-content: start; }
+.int.on { border-left-color: var(--good); }
+.int.ready { border-left-color: var(--cooled); }
+.int-top { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+.int-top b { font: 600 1.1rem/1.2 var(--cond); }
+.int p { margin: 0; font-size: var(--step--1); color: var(--muted); }
+.int a { font-size: var(--step--1); }
+.int .formula { font-size: 0.75rem; background: #fff; border: 1px solid var(--rule); padding: 0.3rem 0.4rem; border-radius: 3px; overflow-wrap: anywhere; }
+.badge.on { background: #DDEFEA; color: var(--good); }
+.badge.ready { background: #E7F1FB; color: #2C5A8C; }
+.badge.off { background: #ECEEEB; color: var(--muted); }
+.exports { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.9rem 0 0; }
+.exports a.chip-btn { color: var(--ink); text-decoration: none; }

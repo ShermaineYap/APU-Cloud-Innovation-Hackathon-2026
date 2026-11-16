@@ -416,6 +416,33 @@ async function loadSuggestions() {
 }
 
 /* ---------- network ---------- */
+/* ---------- Google Cloud and integrations ---------- */
+let integrations = null;
+async function loadIntegrations() {
+  const d = await api("/api/integrations");
+  integrations = Object.fromEntries(d.items.map((i) => [i.id, i]));
+  const label = { on: "On", ready: "Ready", off: "Off" };
+  $("#integrations").innerHTML = d.items.map((i) => `<li class="int ${esc(i.state)}">
+      <div class="int-top"><b>${esc(i.name)}</b><span class="badge ${esc(i.state)}">${label[i.state] || esc(i.state)}</span></div>
+      <p>${esc(i.detail)}</p>
+      ${i.formula ? `<code class="formula">${esc(i.formula)}</code>` : ""}
+      ${i.link ? `<a href="${esc(i.link)}" target="_blank" rel="noopener">${i.id === "gemini_enterprise" ? "Agent card" : i.id === "calendar" ? "Subscribe" : "Open"}</a>` : ""}
+    </li>`).join("");
+  renderExports();
+}
+
+function renderExports() {
+  if (!integrations || !apPlan) return;
+  $("#ap-exports").hidden = false;
+  $("#ap-sheets").href = integrations.sheets.link;
+  $("#ap-calendar").href = integrations.calendar.link;
+}
+$("#ap-formula").addEventListener("click", () => {
+  if (!integrations) return;
+  navigator.clipboard?.writeText(integrations.sheets.formula).then(
+    () => toast("Copied. Paste it into cell A1 of a Google Sheet."), () => toast(integrations.sheets.formula));
+});
+
 async function loadNetwork() {
   const n = await api("/api/network");
   const nodes = n.nodes.slice(0, 9);
@@ -525,6 +552,7 @@ function renderPlanResult(p) {
   $("#ap-apply-safe").textContent = `Apply safe changes (${autoRooms} rooms, ${p.auto_moves} moves)`;
   $("#ap-apply-all").textContent = p.review_moves ? `Approve all, incl. ${p.review_moves} for review` : "Approve all";
   $("#ap-apply-hint").textContent = "Safe = trusted sensors, same block, room not too full. The rest waits for you.";
+  renderExports();
 }
 
 function renderMoves() {
@@ -787,6 +815,7 @@ restoreDecisions().then(() => loadBrief()).catch((e) => { $("#headline").textCon
 loadSuggestions().catch(() => {});
 loadCommands().catch(() => {});
 loadNetwork().catch(() => {});
+loadIntegrations().catch(() => {});
 // Poll only while the tab is visible: a forgotten tab should not keep querying the warehouse.
 setInterval(() => { if (!document.hidden) loadOverview().catch(() => {}); }, 30000);
 setInterval(() => { if (!document.hidden) loadNetwork().catch(() => {}); }, 60000);
