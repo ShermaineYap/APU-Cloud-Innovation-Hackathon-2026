@@ -430,3 +430,5 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .swatch.cw-in { background: var(--in-use); }
 .swatch.cw-free { background: #fff; border: 2px solid var(--cooled); }
 .swatch.cw-none { background: var(--panel); border: 1px solid var(--rule); }
+
+.room .live.replay { color: #2C5A8C; }

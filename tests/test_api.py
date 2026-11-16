@@ -69,8 +69,49 @@ def test_camera_counts_override_people_and_keep_sensor_data():
         api.cache.clear()  # the network panel is cached for a minute
         node = next(n for n in c.get("/api/network").json()["nodes"] if n["device_id"] == "cam-aud1")
         assert not any("stuck" in i for i in node["issues"]) and node["avg_rssi_dbm"] is None
-        # A sensor reading without its air fields is rejected; only cameras may omit them.
-        assert c.post("/api/ingest", json={k: v for k, v in GOOD.items() if k != "co2_ppm"}, headers=h).status_code == 422
+        # Hardware must report its Wi-Fi signal; air fields are optional (a node sends what it can measure).
+        assert c.post("/api/ingest", json={k: v for k, v in GOOD.items() if k != "rssi_dbm"}, headers=h).status_code == 422
+
+
+def test_bare_board_and_partial_sensors_are_accepted_without_nan():
+    with client() as c:
+        h = {"X-Device-Key": "test-key"}
+        bare = {"device_id": "esp32-b0805", "room_id": "B-08-05", "occupied": True, "ac_on": True,
+                "rssi_dbm": -61, "packets_sent": 1, "packets_acked": 1}
+        assert c.post("/api/ingest", json=bare, headers=h).status_code == 200
+        r = c.get("/api/overview")
+        assert "NaN" not in r.text  # missing values travel as null, which browsers can parse
+        room = next(x for x in r.json()["rooms"] if x["room_id"] == "B-08-05")
+        assert room["simulated"] is False and room["co2_ppm"] is None and room["temp_c"] is None
+        assert room["occupied"] is True and room["status"] == "in_use" and room["rssi_dbm"] == -61
+        dht = bare | {"temp_c": 26.4, "humidity_pct": 61.0}
+        assert c.post("/api/ingest", json=dht, headers=h).status_code == 200
+        room = next(x for x in c.get("/api/overview").json()["rooms"] if x["room_id"] == "B-08-05")
+        assert room["temp_c"] == 26.4 and room["co2_ppm"] is None
+
+
+def test_replayed_dataset_is_labelled_not_live():
+    with client() as c:
+        h = {"X-Device-Key": "test-key"}
+        row = {"device_id": "replay-uci-occupancy", "room_id": "AUD-3", "occupied": True,
+               "co2_ppm": 1105.0, "temp_c": 22.4, "humidity_pct": 27.1}  # no Wi-Fi signal: it's a dataset
+        assert c.post("/api/ingest", json=row, headers=h).status_code == 200
+        o = c.get("/api/overview").json()
+        room = next(x for x in o["rooms"] if x["room_id"] == "AUD-3")
+        assert room["replayed"] is True and room["status"] == "stale_air" and room["co2_ppm"] == 1105.0
+        assert o["mode"]["replay_online"] is True and o["mode"]["replay_device"] == "replay-uci-occupancy"
+
+
+def test_replay_script_reads_the_bundled_real_dataset():
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location("replay", Path(__file__).resolve().parents[1] / "scripts" / "replay_dataset.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    rows = mod.load(mod.DATA, "2015-02-09 07:30")
+    assert len(rows) > 4000 and rows[0]["ts"] >= "2015-02-09 07:30"
+    body = mod.payload(rows[0], "replay-uci-occupancy", "B-08-05")
+    assert body["device_id"].startswith("replay-") and "rssi_dbm" not in body and 300 < body["co2_ppm"] < 3000
 
 
 def test_caption_and_report():

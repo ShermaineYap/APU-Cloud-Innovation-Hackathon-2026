@@ -28,6 +28,14 @@ def is_test_device(device_id: str) -> bool:
     return str(device_id).startswith(TEST_DEVICE_PREFIXES)
 
 
+REPLAY_PREFIX = "replay-"
+
+
+def is_replay(device_id: str) -> bool:
+    """Real measurements from a published dataset, replayed through the pipeline (scripts/replay_dataset.py)."""
+    return str(device_id).startswith(REPLAY_PREFIX)
+
+
 def is_camera(device_id: str) -> bool:
     """Camera nodes count people at the edge; they send no CO2, temperature or signal strength."""
     return str(device_id).startswith(CAMERA_PREFIX)

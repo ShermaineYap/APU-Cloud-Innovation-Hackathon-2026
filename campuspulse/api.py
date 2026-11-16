@@ -23,7 +23,7 @@ from . import __version__, analytics, decisions, network, report, study
 from . import autopilot
 from .agent import ask, chart_caption, daily_brief, draft_notices, explain_plan, plan_constraints, suggestions
 from .campus import LIVE_ROOM, ROOM_BY_ID
-from .network import is_camera, is_test_device
+from .network import is_camera, is_replay, is_test_device
 from .config import settings
 from .control import control
 from .weather import weather
@@ -187,8 +187,11 @@ class Reading(BaseModel):
                                         "occupied": self.people > 0, "watts": None, "ac_on": None,
                                         "co2_ppm": None, "temp_c": None, "humidity_pct": None,
                                         "simulated": False}
-        if self.co2_ppm is None or self.temp_c is None or self.rssi_dbm is None:
-            raise HTTPException(422, "sensor readings need co2_ppm, temp_c and rssi_dbm")
+        # A node reports what it can measure: a bare ESP32 has no air sensor, a DHT22 node no CO2.
+        # Missing values are stored empty and shown as "–". Hardware must still report its Wi-Fi signal
+        # (it feeds the trust score); a replayed dataset has no radio, so it may leave it out.
+        if self.rssi_dbm is None and not is_replay(self.device_id):
+            raise HTTPException(422, "sensor readings need rssi_dbm (the node's Wi-Fi signal)")
         watts = self.watts or 0.0
         return self.model_dump() | {
             "ts": self.ts or datetime.now(timezone.utc),
@@ -220,7 +223,12 @@ def _accept(rows: list[dict]) -> int:
     if not rows:
         return n
     now = datetime.now(timezone.utc)
-    state["last_real"] = now
+    if any(is_replay(r["device_id"]) for r in rows):
+        state["last_replay"] = now
+        state["replay_device"] = next(r["device_id"] for r in rows if is_replay(r["device_id"]))
+    hardware = [r for r in rows if not is_replay(r["device_id"])]
+    if hardware:
+        state["last_real"] = now
     state["real_count"] += n
     for r in rows:
         kind = "camera" if is_camera(r["device_id"]) else "sensor"
@@ -277,7 +285,10 @@ async def pubsub_push(request: Request, key: str = ""):
 def _mode() -> dict:
     last = state["last_real"]
     live_seen = bool(last and (datetime.now(timezone.utc) - last).total_seconds() < 300)
+    lr = state.get("last_replay")
+    replay_on = bool(lr and (datetime.now(timezone.utc) - lr).total_seconds() < 300)
     return {"backend": settings.backend, "gemini": settings.gemini_enabled, "model": settings.gemini_model,
+            "replay_online": replay_on, "replay_device": state.get("replay_device") if replay_on else None,
             "live_room": LIVE_ROOM, "live_node_online": live_seen,
             "live_node_last_seen": last.isoformat() if last else None,
             "real_readings": state["real_count"], "tariff_rm_per_kwh": settings.tariff_rm_per_kwh,

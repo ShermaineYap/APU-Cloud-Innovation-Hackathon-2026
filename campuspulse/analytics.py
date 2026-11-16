@@ -76,9 +76,13 @@ def room_states(store: Store, at: pd.Timestamp | None = None) -> list[dict]:
         occupied = bool(r.occupied)
         if cam is not None and pd.notna(cam.people):
             people, occupied = int(cam.people), int(cam.people) > 0
+        def num(v):
+            return None if v is None or pd.isna(v) else float(v)
+
+        co2, temp, watts, rssi = num(r.co2_ppm), num(r.temp_c), num(r.watts), num(r.rssi_dbm)
         if age > STALE_AFTER_MIN:
             status = "offline"
-        elif r.co2_ppm >= settings.co2_limit_ppm and occupied:
+        elif co2 is not None and co2 >= settings.co2_limit_ppm and occupied:
             status = "stale_air"
         elif occupied:
             status = "in_use"
@@ -91,8 +95,9 @@ def room_states(store: Store, at: pd.Timestamp | None = None) -> list[dict]:
             "people_source": "camera" if cam is not None and pd.notna(cam.people) else
                              ("estimate" if r.simulated else "sensor"),
             "camera_device": cam.device_id if cam is not None else None,
-            "co2_ppm": float(r.co2_ppm), "temp_c": float(r.temp_c), "watts": float(r.watts),
-            "ac_on": bool(r.ac_on), "rssi_dbm": float(r.rssi_dbm), "device_id": r.device_id,
+            "co2_ppm": co2, "temp_c": temp, "watts": watts,
+            "ac_on": bool(r.ac_on) if pd.notna(r.ac_on) else False, "rssi_dbm": rssi, "device_id": r.device_id,
+            "replayed": str(r.device_id).startswith("replay-"),
             "simulated": bool(r.simulated), "ts": r.ts.isoformat(), "minutes_ago": round(age, 1),
         })
     return out

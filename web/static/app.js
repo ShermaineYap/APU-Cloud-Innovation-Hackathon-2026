@@ -43,9 +43,17 @@ let rooms = [];
 /* ---------- status bar + lead ---------- */
 function renderStatus(m) {
   const live = m.live_node_online;
+  if (m.replay_online && !live) {
+    $("#status").innerHTML = `<span class="dot on"></span>Replaying real measured sensor data (${esc(m.replay_device || "dataset")}); other rooms simulated`;
+    return renderStatusFoot(m);
+  }
   $("#status").innerHTML = `<span class="dot ${live ? "on" : ""}"></span>${
     live ? `Live sensor in ${esc(m.live_room)} reporting` : `Live sensor in ${esc(m.live_room)} offline, showing simulated fleet`
   }`;
+  renderStatusFoot(m);
+}
+
+function renderStatusFoot(m) {
   $("#foot-mode").textContent =
     `Data: 1 physical node in ${m.live_room} + 20 real APU rooms on their real timetable, sensors simulated (labelled). Store: ${m.backend === "bigquery" ? "BigQuery" : "local DuckDB"}. ` +
     `AI: ${m.gemini ? `Gemini ${m.model}` : "offline mode (no Gemini key)"}. Assumptions: energy RM ${m.tariff_rm_per_kwh}/kWh, grid carbon ${m.grid_kg_co2e_per_kwh} kg CO₂e/kWh.`;
@@ -92,7 +100,8 @@ function renderPlan(list) {
 
 function roomCell(r) {
   const fill = r.people != null && r.capacity ? Math.min(100, (r.people / r.capacity) * 100) : 0;
-  const isLive = r.room_id === mode.live_room && r.simulated === false;
+  const isReplay = r.replayed === true;
+  const isLive = !isReplay && r.simulated === false;
   const isCam = r.people_source === "camera";
   const reading = r.status === "offline"
     ? `<span>Silent ${r.minutes_ago != null ? fmt(r.minutes_ago) + " min" : ""}</span>`
@@ -104,6 +113,7 @@ function roomCell(r) {
     (r.co2_ppm ? `, CO2 ${Math.round(r.co2_ppm)} ppm` : "") + `, data confidence ${r.confidence}`;
   return `<button type="button" class="room ${r.status}${picked.has(r.room_id) ? " picked" : ""}" data-id="${esc(r.room_id)}" aria-label="${esc(label)}">
       ${isCam ? `<span class="live"><span class="dot on"></span>camera count</span>`
+        : isReplay ? `<span class="live replay"><span class="dot on"></span>real data, replayed</span>`
         : isLive ? `<span class="live"><span class="dot on"></span>live</span>` : `<span class="tag">${esc(STATUS_TEXT[r.status])}</span>`}
       <span class="code">${esc(r.room_id)}</span>
       <span class="name">${esc(r.name)}</span>
