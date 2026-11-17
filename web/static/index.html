@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles.css?v=1117b">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='3' y='3' width='26' height='26' rx='3' fill='%231D2A30'/><path d='M8 18h4l3-8 3 12 3-6h3' stroke='%23E4E7E3' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 </head>
 <body>
@@ -210,7 +210,7 @@
     <section class="tab-panel" data-panel="orchestrator" role="tabpanel" aria-labelledby="orch-title" hidden>
       <div class="section-head">
         <h2 id="orch-title">The orchestrator at work</h2>
-        <p class="hint">One Gemini orchestrator directs a team of agents. When the watcher spots a problem or a person asks something, watch who it calls, in what order, and what each one did. Blue = Gemini agent, grey = rules, green = the room.</p>
+        <p class="hint">One Gemini orchestrator directs a team of agents. When the watcher spots a problem or a person asks something, watch who it calls, in what order, and what each one did.</p>
       </div>
       <div class="orch-bar">
         <button type="button" class="solid" id="orch-scan">Scan campus now</button>
@@ -219,7 +219,14 @@
         <label class="switch"><input type="checkbox" id="autonomy" checked> <span>Autonomy on</span></label>
       </div>
       <div class="orch-stage">
-        <svg id="orch-map" class="orch-map" viewBox="0 0 900 450" role="img" aria-label="Live map of the orchestrator and its agents"></svg>
+        <div class="orch-canvas">
+          <div class="orch-stats" id="orch-stats"><span class="pill">Idle</span><span>Nothing in progress. Scan the campus or ask a question.</span></div>
+          <svg id="orch-map" class="orch-map" viewBox="-10 0 940 450" role="img" aria-label="Live map of the orchestrator and its agents"></svg>
+          <ul class="orch-legend">
+            <li class="k-llm">Gemini agent</li><li class="k-rule">Rule-based check</li><li class="k-device">Room equipment</li><li class="k-person">Person</li>
+            <li class="k-num">Numbers show the order of work</li>
+          </ul>
+        </div>
         <div class="orch-now" aria-live="polite">
           <p class="orch-caption" id="orch-caption">Waiting for something to happen…</p>
           <ol class="orch-ticker" id="orch-ticker"></ol>
@@ -310,6 +317,6 @@
   </footer>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=1117b"></script>
 </body>
 </html>

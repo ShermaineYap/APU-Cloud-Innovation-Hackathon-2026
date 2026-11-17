@@ -216,8 +216,8 @@ const ORCH_NODES = [
   ["watcher", "Watcher", "rule", 105, 120], ["person", "People", "person", 105, 330],
   ["orch", "Orchestrator", "hub", 450, 225],
   ["investigator", "Investigator", "llm", 285, 80], ["sql", "SQL analyst", "llm", 450, 55], ["planner", "Planner", "llm", 615, 80],
-  ["brief", "Brief writer", "llm", 745, 165], ["controller", "Controller", "llm", 715, 305], ["guard", "Policy guard", "rule", 845, 305],
-  ["device", "Room / AC", "device", 845, 405], ["reporter", "Reporter", "llm", 575, 390], ["verifier", "Verifier", "rule", 410, 400],
+  ["brief", "Brief writer", "llm", 745, 165], ["controller", "Controller", "llm", 700, 300], ["guard", "Policy guard", "rule", 850, 300],
+  ["device", "Room / AC", "device", 850, 405], ["reporter", "Reporter", "llm", 560, 345], ["verifier", "Verifier", "rule", 410, 400],
   ["checker", "Checker", "rule", 255, 360],
 ];
 const ORCH_EDGES = [["watcher", "orch"], ["person", "orch"], ["orch", "investigator"], ["orch", "sql"], ["orch", "planner"], ["orch", "brief"],
@@ -246,18 +246,41 @@ function drawOrchMap() {
     const [x1, y1] = nodeXY[a], [x2, y2] = nodeXY[b];
     return `<line class="edge" data-e="${a}-${b}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`;
   }).join("");
+  const SUB = { hub: "Gemini · decides who works", llm: "Gemini agent", rule: "rule-based", person: "asks in plain words", device: "takes commands" };
   const nodes = ORCH_NODES.map(([id, label, kind, x, y]) => {
-    const r = kind === "hub" ? 58 : 38;
-    const sub = { hub: "Gemini · directs", llm: "Gemini agent", rule: "rules", person: "requests", device: "commands" }[kind];
+    if (kind === "hub") {
+      return `<g class="node k-hub" data-n="${id}" transform="translate(${x} ${y})">
+        <circle class="halo" r="78"/><circle class="ring" r="68"/><circle class="body" r="56"/>
+        <text class="lbl" y="-3">${label}</text><text class="sub" y="15">Gemini · directs</text>
+        <g class="badge" transform="translate(44 -44)"><circle r="11"/><text y="4"></text></g></g>`;
+    }
+    const w = 132, h = 50;
     return `<g class="node k-${kind}" data-n="${id}" transform="translate(${x} ${y})">
-      <circle class="halo" r="${r + 10}"/><circle class="body" r="${r}"/>
-      <text class="lbl" y="${kind === "hub" ? -4 : -2}">${label}</text><text class="sub" y="${kind === "hub" ? 14 : 12}">${sub}</text></g>`;
+      <rect class="halo" x="${-w / 2 - 7}" y="${-h / 2 - 7}" width="${w + 14}" height="${h + 14}" rx="18"/>
+      <rect class="body" x="${-w / 2}" y="${-h / 2}" width="${w}" height="${h}" rx="12"/>
+      <circle class="pip" cx="${-w / 2 + 15}" cy="0" r="5"/>
+      <text class="lbl" x="9" y="-2">${label}</text><text class="sub" x="9" y="13">${SUB[kind]}</text>
+      <g class="badge" transform="translate(${w / 2 - 4} ${-h / 2 + 2})"><circle r="11"/><text y="4"></text></g></g>`;
   }).join("");
-  $("#orch-map").innerHTML = `<g>${edges}</g><g>${nodes}</g><circle id="orch-token" r="7" class="token" cx="450" cy="225" opacity="0"/>`;
+  $("#orch-map").innerHTML = `<defs>
+      <pattern id="orch-grid" width="30" height="30" patternUnits="userSpaceOnUse"><circle cx="1.5" cy="1.5" r="1.2" class="grid-dot"/></pattern>
+      <radialGradient id="orch-hub" cx="35%" cy="30%" r="80%"><stop offset="0" stop-color="#5E97D8"/><stop offset="1" stop-color="#28527F"/></radialGradient>
+      <filter id="orch-glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    </defs>
+    <rect x="-10" width="940" height="450" fill="url(#orch-grid)"/>
+    <g>${edges}</g><g>${nodes}</g><circle id="orch-token" r="7" class="token" cx="450" cy="225" opacity="0" filter="url(#orch-glow)"/>`;
 }
 drawOrchMap();
 
 let orchQueue = [], orchBusy = false, orchPrev = null, orchShown = new Map(), orchLastId = null;
+let orchStepNo = 0, orchSeen = new Set(), orchLlm = 0;
+function orchStats(running) {
+  const el = $("#orch-stats");
+  if (!el) return;
+  el.innerHTML = orchStepNo
+    ? `<span class="pill ${running ? "run" : "end"}">${running ? "Working" : "Finished"}</span><span><b>${orchStepNo}</b> steps</span><span><b>${orchSeen.size}</b> team members involved</span><span><b>${orchLlm}</b> Gemini steps</span>`
+    : `<span class="pill">Idle</span><span>Nothing in progress. Scan the campus or ask a question.</span>`;
+}
 function edgeEl(a, b) { return $(`#orch-map [data-e="${a}-${b}"]`) || $(`#orch-map [data-e="${b}-${a}"]`); }
 
 async function playStep(step) {
@@ -267,6 +290,11 @@ async function playStep(step) {
   document.querySelectorAll("#orch-map .edge.active").forEach((n) => n.classList.remove("active"));
   const node = $(`#orch-map [data-n="${to}"]`);
   node?.classList.add("active", "visited");
+  orchStepNo += 1; orchSeen.add(to);
+  if (agentKind(step.agent) === "llm") orchLlm += 1;
+  const badge = node?.querySelector(".badge text");
+  if (badge) badge.textContent = orchStepNo;
+  orchStats(true);
   let e = from && edgeEl(from, to);
   if (!e && from) { e = edgeEl("orch", to); }
   if (e) {
@@ -275,6 +303,7 @@ async function playStep(step) {
     tok.setAttribute("opacity", "1");
     tok.animate([{ cx: x1, cy: y1 }, { cx: x2, cy: y2 }].map((k) => ({ transform: `translate(${k.cx - 450}px, ${k.cy - 225}px)` })),
       { duration: 450, easing: "ease-in-out", fill: "forwards" });
+    setTimeout(() => tok.setAttribute("opacity", "0"), 470);
   }
   if (!step.ok) node?.classList.add("bad");
   $("#orch-caption").innerHTML = `<b>${esc(step.agent)}</b> ${esc(step.did)}`;
@@ -292,14 +321,28 @@ async function pumpOrch() {
   if (orchBusy) return;
   orchBusy = true;
   try { while (orchQueue.length) await playStep(orchQueue.shift()); }
-  finally { orchBusy = false; }
+  finally {
+    orchBusy = false;
+    orchSettle();
+  }
 }
 
+let orchAct = null;
+// When the queue is empty: still "working" if the activity itself is not finished yet.
+function orchSettle() {
+  if (orchBusy || !orchStepNo) return;
+  const over = !orchAct || ["resolved", "done", "no_action", "escalated", "awaiting_approval"].includes(orchAct.status);
+  orchStats(!over);
+  if (over) document.querySelectorAll("#orch-map .active").forEach((n) => n.classList.remove("active"));
+}
 function startReplay(act) {
+  orchAct = act;
   orchQueue = [];
   orchPrev = null;
   document.querySelectorAll("#orch-map .visited, #orch-map .bad").forEach((n) => n.classList.remove("visited", "bad"));
   $("#orch-ticker").innerHTML = "";
+  document.querySelectorAll("#orch-map .badge text").forEach((t) => { t.textContent = ""; });
+  orchStepNo = 0; orchSeen = new Set(); orchLlm = 0;
   orchQueue.push(...act.steps);
   orchShown.set(act.id, act.steps.length);
   orchLastId = act.id;
@@ -320,6 +363,7 @@ function feedToMap(f) {
     startReplay({ ...act, steps: act.steps });
     return;
   }
+  if (act.id === orchLastId) { orchAct = act; orchSettle(); }
   if (act.steps.length > seen) {
     orchQueue.push(...act.steps.slice(seen));
     orchShown.set(act.id, act.steps.length);
