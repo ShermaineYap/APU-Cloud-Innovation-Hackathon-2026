@@ -23,11 +23,12 @@ from . import __version__, analytics, decisions, network, report, study
 from . import autopilot
 from .agent import ask, chart_caption, daily_brief, draft_notices, explain_plan, plan_constraints, suggestions
 from .campus import LIVE_ROOM, ROOM_BY_ID
-from .network import is_camera, is_replay, is_test_device
+from .network import is_camera, is_replay, is_test_device, is_virtual
 from .config import settings
 from .control import control
 from .weather import weather
 from .replay import replayer
+from .ops import ops
 from .simulator import Fleet
 from .store import get_store
 
@@ -87,6 +88,7 @@ def _store_simulated(rows: list[dict]) -> None:
     if out:
         get_store().insert_readings(out)
         cache.drop("overview")
+        ops.watch(out)  # the agent loop's watcher sees simulated rooms too (rate-limited)
 
 
 def _live_loop(fleet: Fleet, stop: threading.Event):
@@ -144,6 +146,9 @@ async def lifespan(app: FastAPI):
         if gap:
             log.info("Back-filling %d simulated readings for hours the service was down", len(gap))
             store.insert_readings(gap)
+    from .a2a import route, run_skill
+    from .agent.team import handle_trigger
+    ops.run_trigger = lambda trigger: handle_trigger(trigger, run_skill, route)
     stop = threading.Event()
     if settings.live_simulator and settings.sim_mode == "request":
         sim["fleet"] = fleet
@@ -199,7 +204,7 @@ class Reading(BaseModel):
             "gateway_id": self.gateway_id or room.gateway_id,
             "ac_on": self.ac_on if self.ac_on is not None else watts > room.ac_kw * 1000 * 0.3,
             "watts": watts,
-            "simulated": False,
+            "simulated": is_virtual(self.device_id),  # hand-set values from a virtual node are not measurements
         }
 
 
@@ -220,6 +225,7 @@ def _publish(rows: list[dict]) -> int:
 def _accept(rows: list[dict]) -> int:
     n = _publish(rows) if settings.pubsub_topic else get_store().insert_readings(rows)
     cache.drop("overview")
+    ops.watch(rows)  # every node reading goes past the watcher, which may hand an event to the orchestrator
     rows = [r for r in rows if not is_test_device(r["device_id"])]  # test traffic never counts as live hardware
     if not rows:
         return n
@@ -227,14 +233,18 @@ def _accept(rows: list[dict]) -> int:
     if any(is_replay(r["device_id"]) for r in rows):
         state["last_replay"] = now
         state["replay_device"] = next(r["device_id"] for r in rows if is_replay(r["device_id"]))
-    hardware = [r for r in rows if not is_replay(r["device_id"])]
+    virtual = [r for r in rows if is_virtual(r["device_id"])]
+    if virtual:
+        state["last_virtual"] = now
+        state["virtual_device"] = virtual[-1]["device_id"]
+    hardware = [r for r in rows if not is_replay(r["device_id"]) and not is_virtual(r["device_id"])]
     if hardware:
         state["last_real"] = now
         sensors = [r for r in hardware if not is_camera(r["device_id"])]
         if sensors:
             state["last_hw"] = sensors[-1]
-    state["real_count"] += n
-    for r in rows:
+    state["real_count"] += len(hardware)
+    for r in rows:  # any node reporting (real, replayed or virtual) replaces the simulator in its room
         kind = "camera" if is_camera(r["device_id"]) else "sensor"
         state["real_rooms"][(r["room_id"], kind)] = now
     return n
@@ -301,10 +311,14 @@ def _mode() -> dict:
     lr = state.get("last_replay")
     replay_status = replayer.status()
     replay_on = replay_status["running"] or bool(lr and (datetime.now(timezone.utc) - lr).total_seconds() < 120)
+    lv = state.get("last_virtual")
+    virtual_on = bool(lv and (datetime.now(timezone.utc) - lv).total_seconds() < 120)
     # The presenter's switch wins: a running replay is the source even if the board reported a minute ago.
-    source = "replay" if replay_status["running"] else "esp32" if live_seen else "replay" if replay_on else "simulation"
+    source = ("replay" if replay_status["running"] else "esp32" if live_seen else "replay" if replay_on
+              else "virtual" if virtual_on else "simulation")
     return {"backend": settings.backend, "gemini": settings.gemini_enabled, "model": settings.gemini_model,
             "source": source, "esp32": _esp32_status(last, live_seen), "replay": replay_status,
+            "virtual_online": virtual_on, "virtual_device": state.get("virtual_device") if virtual_on else None,
             "replay_online": replay_on,
             "replay_device": (state.get("replay_device") or replay_status.get("device")) if replay_on else None,
             "live_room": LIVE_ROOM, "live_node_online": live_seen,
@@ -662,8 +676,8 @@ def agent_roster():
     """Who is on the team, the prompt each one runs on, and what the team did recently."""
     from .agent.team import RUNS, roster
     return {"agents": roster(), "runs": list(RUNS), "scheduled": state.get("nightly"),
-            "patterns": ["Coordinator", "Sequential pipeline", "Iterative refinement", "Generator and critic",
-                         "Human in the loop"]}
+            "patterns": ["Orchestrator", "Event-driven loop", "Sequential pipeline", "Iterative refinement",
+                         "Generator and critic", "Human in the loop", "Closed-loop verification"]}
 
 
 @app.post("/api/autopilot/nightly")
@@ -697,6 +711,71 @@ from . import a2a, google_tools  # noqa: E402
 
 app.include_router(a2a.router)
 app.include_router(google_tools.router)
+
+
+# --- the agent loop: activity feed, autonomy switch, approvals ----------------------------------
+
+@app.get("/api/ops")
+def ops_feed():
+    """What the agents are doing: incidents from the watcher, each with every step the orchestrator,
+    the policy guard and the verifier took."""
+    ops.sweep()
+    feed = ops.feed()
+    return {"autonomy": ops.autonomy, "incidents": feed,
+            "open": sum(i["status"] not in ("resolved", "escalated", "no_action") for i in feed),
+            "awaiting_approval": sum(i["status"] == "awaiting_approval" for i in feed),
+            "live_room": LIVE_ROOM, "ac_mode_live_room": control.mode(LIVE_ROOM)}
+
+
+class AutonomyRequest(BaseModel):
+    on: bool
+
+
+@app.post("/api/ops/autonomy")
+def ops_autonomy(body: AutonomyRequest):
+    ops.autonomy = body.on
+    return {"autonomy": ops.autonomy}
+
+
+@app.post("/api/ops/incidents/{incident_id}/{decision}")
+def ops_decide(incident_id: str, decision: Literal["approve", "dismiss"]):
+    """A person answers a change the policy guard held back."""
+    inc = ops.get(incident_id)
+    if inc is None:
+        raise HTTPException(404, "incident not found")
+    p = inc.get("proposal") or {}
+    if inc["status"] != "awaiting_approval" or not p:
+        raise HTTPException(409, "nothing is waiting for approval on this incident")
+    if decision == "dismiss":
+        ops.step(inc, "Estates manager", "dismissed the held change")
+        ops.close(inc, "no_action", inc.get("note") or "Held change dismissed by a person.", "Estates manager")
+        return ops.get(incident_id)
+    cmd = ops._apply(p["room_id"], p["mode"], inc["id"], p.get("reason", ""), "Estates manager")
+    ops.step(inc, "Estates manager", f"approved: AC in {p['room_id']} to '{p['mode']}'")
+    ops.step(inc, "Device command", f"AC mode sent to {p['room_id']}", cmd.get("delivered") or "")
+    with ops.lock:
+        inc["proposal"] = p | {"applied_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    ops.set_status(inc, "acted")
+    ops.schedule_check(inc, p["room_id"], "ac_off" if inc["event"] == "empty_cooled" else "co2_below_limit")
+    return ops.get(incident_id)
+
+
+class ResetRequest(BaseModel):
+    room: str = LIVE_ROOM
+
+
+@app.post("/api/ops/reset")
+def ops_reset(body: ResetRequest):
+    """Demo helper: put a room back on the building schedule, so the agents can catch it again."""
+    if body.room not in ROOM_BY_ID:
+        raise HTTPException(422, "unknown room")
+    ops._apply(body.room, "schedule", "reset", "reset from the dashboard", "Estates manager (reset)")
+    with ops.lock:
+        for k in [k for k in ops.closed_at if k[0] == body.room]:
+            ops.closed_at.pop(k)
+        for k in [k for k in ops.streak if k[0] == body.room]:
+            ops.streak.pop(k)
+    return {"room": body.room, "ac_mode": control.mode(body.room)}
 
 
 @app.get("/")

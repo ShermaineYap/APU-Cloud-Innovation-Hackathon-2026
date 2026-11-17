@@ -191,3 +191,16 @@ def test_esp32_reading_switches_source_to_live():
         m = c.get("/api/source").json()
         assert m["source"] == "esp32" and m["esp32"]["online"] and m["esp32"]["reading"]["temp_c"] == 27.1
         assert c.get("/api/rooms/B-08-05/command", headers=h).json()["ac_mode"]
+
+
+def test_virtual_node_is_labelled_virtual_never_live():
+    with client() as c:
+        h = {"X-Device-Key": "test-key"}
+        wokwi = {"device_id": "wokwi-b0805", "room_id": "B-07-04", "occupied": True, "co2_ppm": 1200,
+                 "temp_c": 26.5, "humidity_pct": 62, "rssi_dbm": -60, "ac_on": True}
+        assert c.post("/api/ingest", json=wokwi, headers=h).status_code == 200
+        o = c.get("/api/overview").json()
+        room = next(x for x in o["rooms"] if x["room_id"] == "B-07-04")
+        assert room["virtual"] is True and room["simulated"] is True and room["co2_ppm"] == 1200
+        assert o["mode"]["virtual_online"] is True and o["mode"]["virtual_device"] == "wokwi-b0805"
+        assert o["mode"]["esp32"]["device"] != "wokwi-b0805"

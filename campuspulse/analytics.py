@@ -98,6 +98,7 @@ def room_states(store: Store, at: pd.Timestamp | None = None) -> list[dict]:
             "co2_ppm": co2, "temp_c": temp, "watts": watts,
             "ac_on": bool(r.ac_on) if pd.notna(r.ac_on) else False, "rssi_dbm": rssi, "device_id": r.device_id,
             "replayed": str(r.device_id).startswith("replay-"),
+            "virtual": str(r.device_id).startswith(("wokwi-", "virtual-")),
             "simulated": bool(r.simulated), "ts": r.ts.isoformat(), "minutes_ago": round(age, 1),
         })
     return out

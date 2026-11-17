@@ -28,7 +28,7 @@ const char *MQTT_HOST = "broker.hivemq.com";
 const int MQTT_PORT = 1883;
 const char *PREFIX = "apu-campuspulse-2026";
 const char *ROOM_ID = "B-08-05";
-const char *DEVICE_ID = "esp32-b0805";
+const char *DEVICE_ID = "wokwi-b0805";  // a virtual node: the dashboard labels it "virtual node (Wokwi)", never "live"
 
 const int DHT_PIN = 15, PIR_PIN = 27, CO2_PIN = 34, AC_LED = 26, LINK_LED = 2;
 const uint32_t REPORT_MS = 5000;

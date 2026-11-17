@@ -66,7 +66,7 @@ def test_coordinator_calls_specialists_in_order_and_checks_its_reply(monkeypatch
 
         run = team.coordinate("Why is AUD-2 wasting energy and what should we do tomorrow?", run_skill, lambda t: "campus_status")
         assert [c[0] for c in called] == ["ask_campus_data", "plan_tomorrow"] and called[1][1] == "comfort first"
-        assert run["reply"].startswith("AUD-2 wasted 548") and run["source"].startswith("Gemini coordinator")
+        assert run["reply"].startswith("AUD-2 wasted 548") and run["source"].startswith("Gemini orchestrator")
         assert run["steps"][-1]["agent"] == "Checker" and run["steps"][-1]["ok"]
 
         # a reply with a figure no specialist gave is replaced by the specialists' own words
@@ -82,7 +82,7 @@ def test_team_endpoints_and_scheduled_run():
     with TestClient(api.app) as c:
         roster = c.get("/api/agents").json()
         ids = {a["id"] for a in roster["agents"]}
-        assert {"coordinator", "sql", "goal_reader", "optimiser", "explainer", "checker"} <= ids
+        assert {"orchestrator", "watcher", "guard", "verifier", "sql", "goal_reader", "optimiser", "explainer", "checker"} <= ids
         assert all(a["prompt"] for a in roster["agents"] if a["kind"] == "llm")  # every prompt is on show
 
         r = c.post("/api/agent", json={"message": "Give me the morning brief"}).json()

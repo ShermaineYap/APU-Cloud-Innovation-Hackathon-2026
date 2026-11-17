@@ -75,6 +75,8 @@ class Settings:
 
     ingest_key: str = field(default_factory=lambda: os.getenv("CP_INGEST_KEY", "dev-ingest-key"))
     live_simulator: bool = field(default_factory=lambda: _bool("CP_LIVE_SIM", True))
+    # The agent loop also watches simulated rooms (rate-limited), so the activity feed shows campus-wide work.
+    agent_watch_sim: bool = field(default_factory=lambda: _bool("CP_AGENT_WATCH_SIM", True))
     # How live simulated readings are produced: "thread" (a loop every 30 s, for a laptop or an
     # always-on server) or "request" (catch up on each request: Cloud Run with request-based
     # billing gives no CPU between requests, and this keeps it inside the free tier).

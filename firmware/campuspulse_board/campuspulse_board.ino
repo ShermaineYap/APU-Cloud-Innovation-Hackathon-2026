@@ -32,7 +32,7 @@ const char *WIFI_PASS = "YOUR_HOTSPOT_PASSWORD";
 // HTTPS mode: the dashboard address and its ingest key (CP_INGEST_KEY / INGEST_KEY in .deploy.env).
 // For a laptop server use http://<laptop-ip>:8000 (same hotspot) and the key from .env.
 const char *SERVER_URL = "https://campuspulse-443933554054.asia-southeast1.run.app";
-const char *INGEST_KEY = "PASTE_THE_INGEST_KEY_HERE";
+const char *INGEST_KEY = "0be6d3843ee86affa65b4687e5065f25";
 
 // MQTT mode only
 const char *MQTT_HOST = "broker.hivemq.com";
@@ -68,13 +68,13 @@ SensirionI2cScd4x scd4x;
 #endif
 
 const int DHT_PIN = 15, PIR_PIN = 27, BUTTON_PIN = 0, AC_LED = 2;
-const uint32_t REPORT_MS = 5000, COMMAND_MS = 10000;
+const uint32_t REPORT_MS = 5000, COMMAND_MS = 5000;   // AC commands arrive within ~5 s
 const uint32_t OCCUPANCY_HOLD_MS = 60000;   // demo scale: AC stays on 1 min after the last motion
 
 String acMode = "schedule";
 volatile bool buttonPressed = false;
 volatile uint32_t lastPressIsr = 0;
-bool buttonOccupied = false;
+bool buttonOccupied = true;          // start "occupied": press BOOT to empty the room and the agents step in
 uint32_t lastMotion = 0, sent = 0, acked = 0;
 float co2Ppm = NAN;
 

@@ -432,6 +432,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .swatch.cw-none { background: var(--panel); border: 1px solid var(--rule); }
 
 .room .live.replay { color: #2C5A8C; }
+.room .live.virtual { color: var(--muted); }
 
 /* ---------- the agent team ---------- */
 .team-roster, .team-log { margin-top: clamp(2rem, 5vw, 3rem); }
@@ -496,3 +497,38 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .ds-side { display: grid; gap: 0.5rem; }
 .ds-chart { position: relative; height: 220px; }
 @media (max-width: 640px) { .ds-grid { grid-template-columns: 1fr; } }
+
+/* ---------- agents on duty (event-driven loop) ---------- */
+.agent-feed { background: var(--panel); border: 1px solid var(--rule); border-left: 4px solid var(--in-use);
+  border-radius: var(--radius-ui); padding: 1rem 1.15rem; margin: 1.25rem 0; }
+.agent-feed h2 { font-size: 1.35rem; }
+.feed-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; }
+.switch { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.9rem; cursor: pointer; }
+.switch input { width: 1.05rem; height: 1.05rem; accent-color: var(--in-use); }
+.feed-list { margin-top: 0.85rem; display: grid; gap: 0.5rem; }
+.incident { border: 1px solid var(--rule); border-radius: var(--radius-ui); background: #fff; padding: 0.55rem 0.75rem; }
+.incident summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 0.5rem; list-style: none; }
+.incident summary::-webkit-details-marker { display: none; }
+.incident summary .src { color: var(--muted); font-size: 0.8rem; margin-left: auto; }
+.pill { font: 600 0.72rem/1 var(--body); text-transform: uppercase; letter-spacing: 0.04em; padding: 0.25rem 0.45rem;
+  border-radius: 999px; background: var(--ground); color: var(--muted); }
+.pill.on { background: rgba(31,122,109,.14); color: var(--in-use); }
+.pill.ok { background: var(--in-use); color: #fff; }
+.pill.wait { background: rgba(184,116,18,.14); color: var(--warn); }
+.pill.warn { background: var(--warn); color: #fff; }
+.pill.bad { background: var(--bad); color: #fff; }
+.incident .note { margin: 0.5rem 0 0; font-weight: 500; }
+.incident .held { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.5rem;
+  padding: 0.5rem; background: rgba(184,116,18,.08); border-radius: var(--radius-ui); }
+.incident .held span { flex: 1 1 260px; font-size: 0.9rem; }
+.ops-trace { list-style: none; margin: 0.6rem 0 0; padding: 0 0 0 0.9rem; border-left: 2px solid var(--rule); display: grid; gap: 0.35rem; }
+.ops-trace li { position: relative; font-size: 0.9rem; }
+.ops-trace li::before { content: ""; position: absolute; left: -1.27rem; top: 0.45rem; width: 0.6rem; height: 0.6rem;
+  border-radius: 50%; background: var(--offline); border: 2px solid #fff; }
+.ops-trace li.k-llm::before { background: var(--cooled); }
+.ops-trace li.k-rule::before { background: var(--muted); }
+.ops-trace li.k-device::before { background: var(--in-use); }
+.ops-trace li.k-person::before { background: var(--warn); }
+.ops-trace li.bad b { color: var(--bad); }
+.ops-trace .t { color: var(--muted); font-size: 0.78rem; margin-right: 0.4rem; font-variant-numeric: tabular-nums; }
+.ops-trace small { display: block; color: var(--muted); font-size: 0.8rem; overflow-wrap: anywhere; }

@@ -2,7 +2,7 @@ import os
 
 # Settings are read at import, so configure the test environment first.
 os.environ.update(CP_BACKEND="local", CP_DUCKDB_PATH=":memory:", CP_LIVE_SIM="false",
-                  CP_HISTORY_DAYS="14", CP_INGEST_KEY="test-key",
+                  CP_HISTORY_DAYS="14", CP_INGEST_KEY="test-key", CP_AGENT_WATCH_SIM="false",
                   CP_WEATHER="off", CP_ENV_FILE="tests/no-such.env")  # never read the real .env
 os.environ.pop("GEMINI_API_KEY", None)
 

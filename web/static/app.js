@@ -120,7 +120,7 @@ function drawDatasetChart(rp) {
 
 function renderSource(m) {
   if (!m || !m.replay) return;
-  if (sourceChoice === null) sourceChoice = m.source || "simulation";
+  if (sourceChoice === null) sourceChoice = m.source === "virtual" ? "simulation" : m.source || "simulation";
   if (m.source === "esp32" && !m.replay.running) sourceChoice = "esp32"; // a board that reports shows itself
   const room = m.live_room;
   $("#source-room").textContent = room;
@@ -163,7 +163,9 @@ function renderSource(m) {
     drawDatasetChart(rp);
   } else {
     body.dataset.view = "";
-    body.innerHTML = `<p class="state"><span class="dot"></span>Off: no real data on show. ${esc(room)} is simulated from APU's real timetable and KL weather, like the other 19 rooms.</p>`;
+    body.innerHTML = m.virtual_online
+      ? `<p class="state wait"><span class="dot"></span>Off: no real data on show. A virtual ESP32 (${esc(m.virtual_device || "Wokwi")}) is feeding ${esc(room)} with hand-set values: the real firmware and message path, not measurements.</p>`
+      : `<p class="state"><span class="dot"></span>Off: no real data on show. ${esc(room)} is simulated from APU's real timetable and KL weather, like the other 19 rooms.</p>`;
   }
   startSourcePoll();
 }
@@ -205,11 +207,96 @@ async function setSource(choice) {
 }
 document.querySelectorAll("[data-source]").forEach((b) => b.addEventListener("click", () => setSource(b.dataset.source)));
 
+/* ---------- agents on duty: the event-driven loop ---------- */
+const INC_STATUS = { investigating: ["Investigating", "wait"], acted: ["Acted", "on"], verifying: ["Verifying", "on"],
+  awaiting_approval: ["Needs you", "warn"], resolved: ["Resolved", "ok"], escalated: ["Escalated", "bad"], no_action: ["No action", ""] };
+const feedOpen = new Set();
+let feedTimer = null, lastFeedSig = "";
+
+function agentKind(name) {
+  if (/Orchestrator|SQL analyst|Brief|Planner|Gemini/.test(name)) return "llm";
+  if (/Estates|person|manager/i.test(name)) return "person";
+  if (/Device/.test(name)) return "device";
+  return "rule";
+}
+
+function timeOf(iso) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function renderFeed(f) {
+  $("#autonomy").checked = !!f.autonomy;
+  $("#autonomy").nextElementSibling.textContent = f.autonomy ? "Autonomy on" : "Autonomy off: changes wait for you";
+  $("#feed-room").textContent = f.live_room;
+  const sig = JSON.stringify(f.incidents.map((i) => [i.id, i.status, i.steps.length]));
+  if (sig === lastFeedSig) return;
+  lastFeedSig = sig;
+  const list = $("#feed-list");
+  if (!f.incidents.length) {
+    list.innerHTML = `<p class="hint">Watching every reading… nothing needs attention yet. Mark ${esc(f.live_room)} empty while its AC is on and the agents will step in.</p>`;
+    return;
+  }
+  list.innerHTML = f.incidents.slice(0, 8).map((inc, n) => {
+    const [label, cls] = INC_STATUS[inc.status] || [inc.status, ""];
+    const open = n === 0 || feedOpen.has(inc.id) || inc.status === "awaiting_approval";
+    const steps = inc.steps.map((s) => `<li class="k-${agentKind(s.agent)} ${s.ok ? "" : "bad"}">
+        <span class="t">${timeOf(s.at)}</span><b>${esc(s.agent)}</b> ${esc(s.did)}${s.detail ? `<small>${esc(s.detail)}</small>` : ""}</li>`).join("");
+    const held = inc.status === "awaiting_approval" && inc.proposal
+      ? `<div class="held"><span>${esc(inc.proposal.held_because || "Held for a person")}: set ${esc(inc.proposal.room_id)} to “${esc(inc.proposal.mode)}”?</span>
+          <button type="button" class="solid" data-inc="${esc(inc.id)}" data-dec="approve">Approve</button>
+          <button type="button" class="ghost" data-inc="${esc(inc.id)}" data-dec="dismiss">Dismiss</button></div>` : "";
+    return `<details class="incident" data-id="${esc(inc.id)}" ${open ? "open" : ""}>
+      <summary><span class="pill ${cls}">${esc(label)}</span><b>${esc(inc.room_id)}</b> ${esc(inc.what)}
+        <span class="src">${esc(inc.source)} · ${timeOf(inc.opened_at)}</span></summary>
+      ${inc.note ? `<p class="note">${esc(inc.note)}</p>` : ""}
+      ${held}
+      <ol class="ops-trace">${steps}</ol>
+      ${inc.orchestrated_by ? `<p class="hint">Run by ${esc(inc.orchestrated_by)}.</p>` : ""}
+    </details>`;
+  }).join("");
+  list.querySelectorAll("details.incident").forEach((d) => d.addEventListener("toggle", () => {
+    if (d.open) feedOpen.add(d.dataset.id); else feedOpen.delete(d.dataset.id);
+  }));
+  list.querySelectorAll("[data-dec]").forEach((b) => b.addEventListener("click", async () => {
+    b.disabled = true;
+    try {
+      await api(`/api/ops/incidents/${b.dataset.inc}/${b.dataset.dec}`, { method: "POST" });
+      toast(b.dataset.dec === "approve" ? "Approved: the command is on its way to the room." : "Dismissed.");
+      lastFeedSig = "";
+      await loadFeed();
+    } catch (e) { toast(e.message); b.disabled = false; }
+  }));
+}
+
+async function loadFeed() {
+  renderFeed(await api("/api/ops"));
+}
+function startFeed() {
+  if (feedTimer) return;
+  feedTimer = setInterval(() => { if (!document.hidden && !$("#agent-feed").closest("[hidden]")) loadFeed().catch(() => {}); }, 3000);
+}
+$("#autonomy").addEventListener("change", async (e) => {
+  try { renderFeed(await api("/api/ops/autonomy", { method: "POST", body: JSON.stringify({ on: e.target.checked }) }).then(() => api("/api/ops"))); }
+  catch (err) { toast(err.message); }
+});
+$("#feed-reset").addEventListener("click", async () => {
+  try {
+    const r = await api("/api/ops/reset", { method: "POST", body: JSON.stringify({}) });
+    toast(`${r.room} is back on the building schedule. Mark it empty and the agents will catch it.`);
+    loadOverview().catch(() => {});
+  } catch (e) { toast(e.message); }
+});
+
 /* ---------- status bar + lead ---------- */
 function renderStatus(m) {
   const live = m.live_node_online;
   if (m.replay_online && !live) {
     $("#status").innerHTML = `<span class="dot on"></span>Showing a published real dataset (office in Mons, Belgium); APU rooms simulated`;
+    return renderStatusFoot(m);
+  }
+  if (m.virtual_online && !live) {
+    $("#status").innerHTML = `<span class="dot"></span>Virtual ESP32 (Wokwi) feeding ${esc(m.live_room)}, hand-set values; all rooms simulated`;
     return renderStatusFoot(m);
   }
   $("#status").innerHTML = `<span class="dot ${live ? "on" : ""}"></span>${
@@ -266,6 +353,7 @@ function renderPlan(list) {
 function roomCell(r) {
   const fill = r.people != null && r.capacity ? Math.min(100, (r.people / r.capacity) * 100) : 0;
   const isReplay = r.replayed === true;
+  const isVirtual = r.virtual === true;
   const isLive = !isReplay && r.simulated === false;
   const isCam = r.people_source === "camera";
   const reading = r.status === "offline"
@@ -279,6 +367,7 @@ function roomCell(r) {
   return `<button type="button" class="room ${r.status}${picked.has(r.room_id) ? " picked" : ""}" data-id="${esc(r.room_id)}" aria-label="${esc(label)}">
       ${isCam ? `<span class="live"><span class="dot on"></span>camera count</span>`
         : isReplay ? `<span class="live replay"><span class="dot on"></span>real data, replayed</span>`
+        : isVirtual ? `<span class="live virtual"><span class="dot"></span>virtual node (Wokwi)</span>`
         : isLive ? `<span class="live"><span class="dot on"></span>live</span>` : `<span class="tag">${esc(STATUS_TEXT[r.status])}</span>`}
       <span class="code">${esc(r.room_id)}</span>
       <span class="name">${esc(r.name)}</span>
@@ -642,6 +731,8 @@ const TEAM_EXAMPLES = [
   "Why is Auditorium 2 wasting energy, and what should we do about it tomorrow?",
   "How is the campus doing this week?",
   "Plan tomorrow, comfort first, at most 5 moves",
+  "What have you handled on campus today, and is anything waiting for me?",
+  "Check B-08-05 and switch its AC to follow occupancy if nobody is in",
 ];
 const KIND = { llm: "Gemini agent", solver: "Solver", rule: "Rule check" };
 function stepsHtml(steps) {
@@ -672,7 +763,7 @@ async function loadTeam() {
 async function askTeam(q) {
   const box = $("#team-run"), btn = $("#team-form button");
   btn.disabled = true; box.hidden = false;
-  box.innerHTML = `<p class="text">The coordinator is deciding who to call…</p>`;
+  box.innerHTML = `<p class="text">The orchestrator is deciding which agents and tools to call…</p>`;
   try {
     const r = await api("/api/agent", { method: "POST", body: JSON.stringify({ message: q }) });
     box.innerHTML = `<p class="text">${esc(r.reply).replaceAll("\n", "<br>")}</p>
@@ -1106,6 +1197,8 @@ loadSuggestions().catch(() => {});
 loadCommands().catch(() => {});
 loadNetwork().catch(() => {});
 loadIntegrations().catch(() => {});
+loadFeed().catch(() => {});
+startFeed();
 // Poll only while the tab is visible: a forgotten tab should not keep querying the warehouse.
 setInterval(() => { if (!document.hidden) loadOverview().catch(() => {}); }, 30000);
 setInterval(() => { if (!document.hidden) loadNetwork().catch(() => {}); }, 60000);

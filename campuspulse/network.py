@@ -29,6 +29,14 @@ def is_test_device(device_id: str) -> bool:
 
 
 REPLAY_PREFIX = "replay-"
+# Virtual nodes (the Wokwi ESP32 simulator, edge/virtual_node.py): the real firmware and the real message
+# path, but the readings are set by hand (sliders, a knob), so they are stored as simulated and never "live".
+VIRTUAL_PREFIXES = ("wokwi-", "virtual-")
+
+
+def is_virtual(device_id: str) -> bool:
+    return str(device_id).startswith(VIRTUAL_PREFIXES)
+
 
 
 def is_replay(device_id: str) -> bool:

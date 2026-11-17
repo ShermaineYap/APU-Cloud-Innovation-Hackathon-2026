@@ -24,7 +24,7 @@ def main() -> None:
     p.add_argument("--port", type=int, default=1883)
     p.add_argument("--prefix", default=os.getenv("CP_MQTT_PREFIX", "apu-campuspulse-2026"))
     p.add_argument("--room", default="B-08-05")
-    p.add_argument("--device", default="esp32-b0805")
+    p.add_argument("--device", default="virtual-b0805", help="virtual-/wokwi- ids are labelled virtual, never live")
     p.add_argument("--people", type=int, default=0, help="0 = empty room")
     p.add_argument("--co2", type=float, default=None, help="CO2 ppm (default follows people)")
     p.add_argument("--every", type=float, default=5.0, help="seconds between reports")

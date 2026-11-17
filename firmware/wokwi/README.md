@@ -32,26 +32,58 @@ libraries). Open it and press ▶. To change it, sign in and use *Save a copy*.
 5. If several teams use the public broker, change `PREFIX` in the sketch to something only you use,
    and use the same value below.
 
-## Run it
+## It is a virtual node, and the dashboard says so
 
-Terminal 1, the app (reads `CP_MQTT_HOST` and `CP_MQTT_PREFIX` from `.env`):
+The sketch reports as `wokwi-b0805`. Its readings come from Wokwi's sliders and knob, not from a
+measurement, so the dashboard tags B-08-05 **"virtual node (Wokwi)"** and the status bar says
+"hand-set values". Only the physical board (`esp32-b0805`) can ever show as **live**.
+
+**The saved Wokwi project still has the old id.** Open it, find `DEVICE_ID` near the top of `sketch.ino`,
+change `"esp32-b0805"` to `"wokwi-b0805"`, and press *Save*. Otherwise it would pose as the real board.
+
+## Run it: feed the live cloud site (or your laptop)
+
+The bridge runs on your laptop and works with **any** CampusPulse server, the Cloud Run site included.
+It carries readings up (MQTT → HTTPS `/api/ingest`) and AC commands back down (it checks
+`/api/rooms/<room>/command` every 5 s and publishes changes to MQTT). So you don't need MQTT on the server.
+
+```
+Wokwi ESP32 ──MQTT──► broker.hivemq.com ──► bridge (your laptop) ──HTTPS──► CampusPulse (Cloud Run or laptop)
+     ▲                                          │   ◄── AC mode, every 5 s ──┘
+     └──── <prefix>/B-08-05/command (retained) ─┘
+```
+
+**To the live cloud site** (needs the cloud ingest key, `INGEST_KEY` in Shermaine's `.deploy.env`):
+
+```bash
+.venv/Scripts/python -m campuspulse.mqtt_bridge --broker broker.hivemq.com --prefix apu-campuspulse-2026 --api https://campuspulse-443933554054.asia-southeast1.run.app --key <cloud ingest key>
+```
+
+**To your laptop server** (the key is `CP_INGEST_KEY` in `.env`; use `127.0.0.1`, not `localhost`,
+because on Windows `localhost` tries IPv6 first and the server only listens on IPv4):
 
 ```bash
 .venv/Scripts/python -m uvicorn campuspulse.api:app --port 8000
 ```
 
-Terminal 2, the bridge:
-
 ```bash
-.venv/Scripts/python -m campuspulse.mqtt_bridge --broker broker.hivemq.com --prefix apu-campuspulse-2026 --api http://localhost:8000
+.venv/Scripts/python -m campuspulse.mqtt_bridge --broker broker.hivemq.com --prefix apu-campuspulse-2026 --api http://127.0.0.1:8000 --key <CP_INGEST_KEY from .env>
 ```
 
-Keep the Wokwi tab **visible in front** while it runs: browsers throttle background tabs, and the
-speed meter (top right of the simulation, next to the clock) should read close to 100%. At a few percent the
-simulated board is too slow for MQTT and keeps reconnecting.
+Then open Wokwi and press the green ▶. Keep the Wokwi tab **visible in front**: browsers slow down
+background tabs, and the speed meter (top right) should read close to 100%. The serial monitor shows
+`Wi-Fi ok` and `MQTT ... connected`, and the bridge terminal prints `-> 200` for each reading. Within
+about 30 s, B-08-05 shows **virtual node (Wokwi)** with your slider values.
 
-Then press the green ▶ in Wokwi. The serial monitor shows `Wi-Fi ok` and `MQTT ... connected`, and
-B-08-05 on the dashboard turns **live** within about 30 seconds.
+| Bridge prints | Meaning |
+|---|---|
+| `-> 200 {"accepted":1...}` | Working |
+| `-> 401` | Wrong `--key` for that server |
+| `refused` / `10061` | Wrong `--api`, or the laptop server isn't running (use `127.0.0.1`) |
+| `command for B-08-05 -> AC mode occupancy` | An approval went down to the node |
+
+**Don't run Wokwi and the real board at the same time** in the same room: the dashboard shows the
+latest message, so the readings would jump between the two.
 
 ## What to show
 
@@ -62,7 +94,7 @@ B-08-05 on the dashboard turns **live** within about 30 seconds.
 3. **Obey:** stop the motion. A minute later the blue AC LED goes off, because the room is empty.
    Click motion again and it comes back on.
 
-No Wokwi? `python edge/virtual_node.py` sends the same messages from a terminal and prints the commands it receives.
+No Wokwi? `.venv/Scripts/python edge/virtual_node.py --people 30` sends the same messages from a terminal (as `virtual-b0805`, also labelled virtual) and prints the commands it receives. Run the bridge the same way.
 
 Note: a public broker is fine for a demo. For real use, run your own broker (Mosquitto, HiveMQ Cloud)
 with a username, password and TLS (`CP_MQTT_USER`, `CP_MQTT_PASS`, `CP_MQTT_TLS=true`).

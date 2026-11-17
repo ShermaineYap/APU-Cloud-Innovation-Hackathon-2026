@@ -39,11 +39,22 @@ On the demo data a typical teaching day saves about **40% of cooling energy** an
 
 ## The agent team
 
-CampusPulse is a team of agents, not one prompt. The **Agents** tab shows every member, the prompt it runs on, and a live trace of each run.
+CampusPulse is a team of agents run by **one Gemini orchestrator**. It handles everything: people's requests (the Agents tab, Gemini Enterprise over A2A) and events from the sensors. Nobody has to ask: the **Agents on duty** feed on the Today tab shows the loop working by itself. Full workflow: [docs/AGENT_WORKFLOW.md](docs/AGENT_WORKFLOW.md).
+
+```
+sensor reading ─► Watcher (rules) ─event─► ORCHESTRATOR (Gemini, function calling)
+                                              ├─ inspect_room · recent_incidents · SQL analyst · brief writer · planner
+                                              ├─ set_ac_mode ─► Policy guard (rules) ─► safe: device command │ risky: a person approves
+                                              ├─ schedule_check ─► Verifier (rules) re-reads the room ─► back to the orchestrator
+                                              └─ close_incident ─► note checked by the Checker
+```
 
 | Member | Kind | Job | Guardrail |
 | --- | --- | --- | --- |
-| Coordinator | Gemini | Reads a request, decides which specialists to call and in what order, combines their replies | Must delegate; its reply is checked against the specialists' figures |
+| Orchestrator | Gemini | Handles every request and event: decides which specialist or tool to call, in what order; acts through the guard; asks the verifier; closes the loop | Must use tools; can't change a room past the guard; its words go to the checker |
+| Watcher | Rule (no LLM) | Reads every sensor message; opens an incident when a room looks wrong (AC on with nobody in, CO₂ over the limit while occupied) | Condition must hold; one open incident per room; rate-limited |
+| Policy guard | Rule (no LLM) | Decides whether the orchestrator's change happens now or waits for a person | Less cooling only if the room is empty, its sensor trusted, under a daily limit |
+| Verifier | Rule (no LLM) | Re-reads the room after an action and reports whether it worked | The orchestrator can't mark its own homework |
 | Goal reader | Gemini | Turns plain-English goals into solver constraints (function calling) | Fixed schema; a rule-based reader takes over on failure |
 | Optimiser | MIP solver | Assigns rooms and AC schedules for least energy | Deterministic, proven optimal |
 | Digital twin | Simulator | Compares today's setup with the plan in kWh, RM, CO₂e, stale-air hours | Same physics for both sides |
@@ -51,7 +62,7 @@ CampusPulse is a team of agents, not one prompt. The **Agents** tab shows every 
 | SQL analyst | Gemini | Writes BigQuery SQL, reads errors, fixes its own query | Read-only guard, query budget |
 | Checker | Rule (no LLM) | Rejects any figure the engine did not supply; one rewrite, then the template | Compares numbers, cannot be talked round |
 
-Patterns used (Google's multi-agent vocabulary): **coordinator**, **sequential pipeline**, **iterative refinement**, **generator and critic**, **human in the loop**. The same coordinator answers Gemini Enterprise over A2A. `POST /api/autopilot/nightly` is the run nobody presses a button for: Cloud Scheduler starts Autopilot at 18:00 on teaching days (`NIGHTLY=1 ./deploy/deploy.sh`), safe changes apply and the rest wait for a person.
+Patterns used (Google's multi-agent vocabulary): **orchestrator**, **event-driven loop**, **sequential pipeline**, **iterative refinement**, **generator and critic**, **human in the loop**, **closed-loop verification**. The same orchestrator answers Gemini Enterprise over A2A. `POST /api/autopilot/nightly` is the run nobody presses a button for: Cloud Scheduler starts Autopilot at 18:00 on teaching days (`NIGHTLY=1 ./deploy/deploy.sh`), safe changes apply and the rest wait for a person.
 
 ## Everything else it does
 
