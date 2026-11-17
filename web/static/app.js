@@ -207,17 +207,130 @@ async function setSource(choice) {
 }
 document.querySelectorAll("[data-source]").forEach((b) => b.addEventListener("click", () => setSource(b.dataset.source)));
 
-/* ---------- agents on duty: the event-driven loop ---------- */
+/* ---------- orchestrator tab: live agent map + activity ---------- */
 const INC_STATUS = { investigating: ["Investigating", "wait"], acted: ["Acted", "on"], verifying: ["Verifying", "on"],
-  awaiting_approval: ["Needs you", "warn"], resolved: ["Resolved", "ok"], escalated: ["Escalated", "bad"], no_action: ["No action", ""] };
-const feedOpen = new Set();
-let feedTimer = null, lastFeedSig = "";
+  awaiting_approval: ["Needs you", "warn"], resolved: ["Resolved", "ok"], escalated: ["Escalated", "bad"], no_action: ["No action", ""],
+  working: ["Working", "wait"], done: ["Answered", "ok"] };
+// node id, label, kind, x, y
+const ORCH_NODES = [
+  ["watcher", "Watcher", "rule", 105, 120], ["person", "People", "person", 105, 330],
+  ["orch", "Orchestrator", "hub", 450, 225],
+  ["investigator", "Investigator", "llm", 285, 80], ["sql", "SQL analyst", "llm", 450, 55], ["planner", "Planner", "llm", 615, 80],
+  ["brief", "Brief writer", "llm", 745, 165], ["controller", "Controller", "llm", 715, 305], ["guard", "Policy guard", "rule", 845, 305],
+  ["device", "Room / AC", "device", 845, 405], ["reporter", "Reporter", "llm", 575, 390], ["verifier", "Verifier", "rule", 410, 400],
+  ["checker", "Checker", "rule", 255, 360],
+];
+const ORCH_EDGES = [["watcher", "orch"], ["person", "orch"], ["orch", "investigator"], ["orch", "sql"], ["orch", "planner"], ["orch", "brief"],
+  ["orch", "controller"], ["controller", "guard"], ["guard", "device"], ["orch", "reporter"], ["orch", "verifier"], ["verifier", "device"], ["orch", "checker"]];
+const NODE_OF = (agent) => {
+  const a = String(agent);
+  if (/^Watcher/.test(a)) return "watcher";
+  if (/^Person|Estates/.test(a)) return "person";
+  if (/^Orchestrator/.test(a)) return "orch";
+  if (/^Investigator/.test(a)) return "investigator";
+  if (/^SQL/.test(a)) return "sql";
+  if (/Goal reader|Optimiser|Digital twin|Plan explainer|^Planner/.test(a)) return "planner";
+  if (/^Brief/.test(a)) return "brief";
+  if (/^Controller/.test(a)) return "controller";
+  if (/^Policy guard/.test(a)) return "guard";
+  if (/^Device/.test(a)) return "device";
+  if (/^Verifier/.test(a)) return "verifier";
+  if (/^Reporter/.test(a)) return "reporter";
+  if (/^Checker/.test(a)) return "checker";
+  return "orch";
+};
+const nodeXY = Object.fromEntries(ORCH_NODES.map(([id, , , x, y]) => [id, [x, y]]));
+
+function drawOrchMap() {
+  const edges = ORCH_EDGES.map(([a, b]) => {
+    const [x1, y1] = nodeXY[a], [x2, y2] = nodeXY[b];
+    return `<line class="edge" data-e="${a}-${b}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`;
+  }).join("");
+  const nodes = ORCH_NODES.map(([id, label, kind, x, y]) => {
+    const r = kind === "hub" ? 58 : 38;
+    const sub = { hub: "Gemini · directs", llm: "Gemini agent", rule: "rules", person: "requests", device: "commands" }[kind];
+    return `<g class="node k-${kind}" data-n="${id}" transform="translate(${x} ${y})">
+      <circle class="halo" r="${r + 10}"/><circle class="body" r="${r}"/>
+      <text class="lbl" y="${kind === "hub" ? -4 : -2}">${label}</text><text class="sub" y="${kind === "hub" ? 14 : 12}">${sub}</text></g>`;
+  }).join("");
+  $("#orch-map").innerHTML = `<g>${edges}</g><g>${nodes}</g><circle id="orch-token" r="7" class="token" cx="450" cy="225" opacity="0"/>`;
+}
+drawOrchMap();
+
+let orchQueue = [], orchBusy = false, orchPrev = null, orchShown = new Map(), orchLastId = null;
+function edgeEl(a, b) { return $(`#orch-map [data-e="${a}-${b}"]`) || $(`#orch-map [data-e="${b}-${a}"]`); }
+
+async function playStep(step) {
+  const to = NODE_OF(step.agent);
+  const from = orchPrev && orchPrev !== to ? orchPrev : (to === "orch" ? null : "orch");
+  document.querySelectorAll("#orch-map .node.active").forEach((n) => n.classList.remove("active"));
+  document.querySelectorAll("#orch-map .edge.active").forEach((n) => n.classList.remove("active"));
+  const node = $(`#orch-map [data-n="${to}"]`);
+  node?.classList.add("active", "visited");
+  let e = from && edgeEl(from, to);
+  if (!e && from) { e = edgeEl("orch", to); }
+  if (e) {
+    e.classList.add("active", "visited");
+    const tok = $("#orch-token"), [x1, y1] = nodeXY[from] || nodeXY.orch, [x2, y2] = nodeXY[to];
+    tok.setAttribute("opacity", "1");
+    tok.animate([{ cx: x1, cy: y1 }, { cx: x2, cy: y2 }].map((k) => ({ transform: `translate(${k.cx - 450}px, ${k.cy - 225}px)` })),
+      { duration: 450, easing: "ease-in-out", fill: "forwards" });
+  }
+  if (!step.ok) node?.classList.add("bad");
+  $("#orch-caption").innerHTML = `<b>${esc(step.agent)}</b> ${esc(step.did)}`;
+  const li = document.createElement("li");
+  li.className = `k-${agentKind(step.agent)} ${step.ok ? "" : "bad"}`;
+  li.innerHTML = `<span class="t">${timeOf(step.at)}</span><b>${esc(step.agent)}</b> ${esc(step.did)}${step.detail ? `<small>${esc(step.detail)}</small>` : ""}`;
+  const tick = $("#orch-ticker");
+  tick.prepend(li);
+  while (tick.children.length > 7) tick.lastChild.remove();
+  orchPrev = to;
+  await new Promise((r) => setTimeout(r, 750));
+}
+
+async function pumpOrch() {
+  if (orchBusy) return;
+  orchBusy = true;
+  try { while (orchQueue.length) await playStep(orchQueue.shift()); }
+  finally { orchBusy = false; }
+}
+
+function startReplay(act) {
+  orchQueue = [];
+  orchPrev = null;
+  document.querySelectorAll("#orch-map .visited, #orch-map .bad").forEach((n) => n.classList.remove("visited", "bad"));
+  $("#orch-ticker").innerHTML = "";
+  orchQueue.push(...act.steps);
+  orchShown.set(act.id, act.steps.length);
+  orchLastId = act.id;
+  pumpOrch();
+}
+
+// New steps from the newest activity play live; a new activity clears the map first.
+function feedToMap(f) {
+  const act = f.incidents[0];
+  if (!act) return;
+  const seen = orchShown.get(act.id);
+  if (seen === undefined) {
+    if (orchLastId === null && act.status && ["resolved", "done", "no_action", "escalated"].includes(act.status)) {
+      orchShown.set(act.id, act.steps.length);  // first load: don't replay old history by itself
+      orchLastId = act.id;
+      return;
+    }
+    startReplay({ ...act, steps: act.steps });
+    return;
+  }
+  if (act.steps.length > seen) {
+    orchQueue.push(...act.steps.slice(seen));
+    orchShown.set(act.id, act.steps.length);
+    pumpOrch();
+  }
+}
 
 function agentKind(name) {
-  if (/Orchestrator|SQL analyst|Brief|Planner|Gemini/.test(name)) return "llm";
-  if (/Estates|person|manager/i.test(name)) return "person";
-  if (/Device/.test(name)) return "device";
-  return "rule";
+  const n = NODE_OF(name);
+  return { orch: "llm", investigator: "llm", sql: "llm", planner: "llm", brief: "llm", controller: "llm", reporter: "llm",
+           person: "person", device: "device" }[n] || "rule";
 }
 
 function timeOf(iso) {
@@ -225,30 +338,38 @@ function timeOf(iso) {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+const feedOpen = new Set();
+let feedTimer = null, lastFeedSig = "", lastFeed = null;
 function renderFeed(f) {
+  lastFeed = f;
   $("#autonomy").checked = !!f.autonomy;
   $("#autonomy").nextElementSibling.textContent = f.autonomy ? "Autonomy on" : "Autonomy off: changes wait for you";
-  $("#feed-room").textContent = f.live_room;
+  const tabBtn = $('[data-tab="orchestrator"] .new');
+  if (tabBtn) tabBtn.textContent = f.open ? `${f.open} live` : "live";
+  feedToMap(f);
   const sig = JSON.stringify(f.incidents.map((i) => [i.id, i.status, i.steps.length]));
   if (sig === lastFeedSig) return;
   lastFeedSig = sig;
   const list = $("#feed-list");
   if (!f.incidents.length) {
-    list.innerHTML = `<p class="hint">Watching every reading… nothing needs attention yet. Mark ${esc(f.live_room)} empty while its AC is on and the agents will step in.</p>`;
+    list.innerHTML = `<p class="hint">Watching every reading… nothing needs attention yet. Press <b>Scan campus now</b> to have the watcher look at every room.</p>`;
     return;
   }
-  list.innerHTML = f.incidents.slice(0, 8).map((inc, n) => {
+  list.innerHTML = f.incidents.slice(0, 10).map((inc, n) => {
     const [label, cls] = INC_STATUS[inc.status] || [inc.status, ""];
-    const open = n === 0 || feedOpen.has(inc.id) || inc.status === "awaiting_approval";
+    const open = feedOpen.has(inc.id) || inc.status === "awaiting_approval";
     const steps = inc.steps.map((s) => `<li class="k-${agentKind(s.agent)} ${s.ok ? "" : "bad"}">
         <span class="t">${timeOf(s.at)}</span><b>${esc(s.agent)}</b> ${esc(s.did)}${s.detail ? `<small>${esc(s.detail)}</small>` : ""}</li>`).join("");
     const held = inc.status === "awaiting_approval" && inc.proposal
       ? `<div class="held"><span>${esc(inc.proposal.held_because || "Held for a person")}: set ${esc(inc.proposal.room_id)} to “${esc(inc.proposal.mode)}”?</span>
           <button type="button" class="solid" data-inc="${esc(inc.id)}" data-dec="approve">Approve</button>
           <button type="button" class="ghost" data-inc="${esc(inc.id)}" data-dec="dismiss">Dismiss</button></div>` : "";
+    const title = inc.kind === "request" ? `<b>Request</b> “${esc(inc.what)}”` : `<b>${esc(inc.room_id)}</b> ${esc(inc.what)}`;
+    const who = [...new Set(inc.steps.map((s) => NODE_OF(s.agent)))].length;
     return `<details class="incident" data-id="${esc(inc.id)}" ${open ? "open" : ""}>
-      <summary><span class="pill ${cls}">${esc(label)}</span><b>${esc(inc.room_id)}</b> ${esc(inc.what)}
-        <span class="src">${esc(inc.source)} · ${timeOf(inc.opened_at)}</span></summary>
+      <summary><span class="pill ${cls}">${esc(label)}</span>${title}
+        <span class="src">${esc(inc.source)} · ${who} team members · ${timeOf(inc.opened_at)}</span>
+        <button type="button" class="linkish replay-btn" data-replay="${esc(inc.id)}">Replay</button></summary>
       ${inc.note ? `<p class="note">${esc(inc.note)}</p>` : ""}
       ${held}
       <ol class="ops-trace">${steps}</ol>
@@ -257,6 +378,11 @@ function renderFeed(f) {
   }).join("");
   list.querySelectorAll("details.incident").forEach((d) => d.addEventListener("toggle", () => {
     if (d.open) feedOpen.add(d.dataset.id); else feedOpen.delete(d.dataset.id);
+  }));
+  list.querySelectorAll("[data-replay]").forEach((b) => b.addEventListener("click", (e) => {
+    e.preventDefault();
+    const act = lastFeed.incidents.find((i) => i.id === b.dataset.replay);
+    if (act) { startReplay(act); $("#orch-map").scrollIntoView({ behavior: "smooth", block: "center" }); }
   }));
   list.querySelectorAll("[data-dec]").forEach((b) => b.addEventListener("click", async () => {
     b.disabled = true;
@@ -274,19 +400,29 @@ async function loadFeed() {
 }
 function startFeed() {
   if (feedTimer) return;
-  feedTimer = setInterval(() => { if (!document.hidden && !$("#agent-feed").closest("[hidden]")) loadFeed().catch(() => {}); }, 3000);
+  feedTimer = setInterval(() => { if (!document.hidden) loadFeed().catch(() => {}); }, 2500);
 }
 $("#autonomy").addEventListener("change", async (e) => {
-  try { renderFeed(await api("/api/ops/autonomy", { method: "POST", body: JSON.stringify({ on: e.target.checked }) }).then(() => api("/api/ops"))); }
+  try { await api("/api/ops/autonomy", { method: "POST", body: JSON.stringify({ on: e.target.checked }) }); lastFeedSig = ""; await loadFeed(); }
   catch (err) { toast(err.message); }
 });
-$("#feed-reset").addEventListener("click", async () => {
+$("#orch-scan").addEventListener("click", async (e) => {
+  e.target.disabled = true;
   try {
-    const r = await api("/api/ops/reset", { method: "POST", body: JSON.stringify({}) });
-    toast(`${r.room} is back on the building schedule. Mark it empty and the agents will catch it.`);
-    loadOverview().catch(() => {});
-  } catch (e) { toast(e.message); }
+    const r = await api("/api/ops/scan", { method: "POST" });
+    toast(r.opened ? `The watcher found ${r.room_id}: the orchestrator is on it.` : r.why);
+    await loadFeed();
+  } catch (err) { toast(err.message); } finally { e.target.disabled = false; }
 });
+async function askOrchestrator(q, btn) {
+  btn.disabled = true;
+  toast("Sent to the orchestrator. Watch the map.");
+  const poll = setInterval(() => loadFeed().catch(() => {}), 1200);  // steps appear while it works
+  try { await api("/api/agent", { method: "POST", body: JSON.stringify({ message: q }) }); await loadFeed(); }
+  catch (err) { toast(err.message); } finally { clearInterval(poll); btn.disabled = false; }
+}
+$("#orch-ask-done").addEventListener("click", (e) => askOrchestrator("What have you handled on campus today, and is anything waiting for me?", e.target));
+$("#orch-ask-why").addEventListener("click", (e) => askOrchestrator("Why is Auditorium 2 wasting energy, and what should we do about it tomorrow?", e.target));
 
 /* ---------- status bar + lead ---------- */
 function renderStatus(m) {
@@ -782,7 +918,7 @@ $("#team-examples").innerHTML = TEAM_EXAMPLES.map((q) => `<button type="button" 
 $("#team-examples").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { $("#team-q").value = b.textContent; askTeam(b.textContent); }));
 
 /* ---------- tabs ---------- */
-const TABS = ["today", "autopilot", "agents", "actions", "students", "data"];
+const TABS = ["today", "autopilot", "orchestrator", "agents", "actions", "students", "data"];
 function showTab(name, push = true) {
   if (!TABS.includes(name)) name = "today";
   document.querySelectorAll("[role=tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));

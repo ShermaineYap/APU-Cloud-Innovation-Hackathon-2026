@@ -149,6 +149,7 @@ async def lifespan(app: FastAPI):
     from .a2a import route, run_skill
     from .agent.team import handle_trigger
     ops.run_trigger = lambda trigger: handle_trigger(trigger, run_skill, route)
+    ops.fleet = fleet  # the verifier re-runs simulated rooms' digital twin
     stop = threading.Event()
     if settings.live_simulator and settings.sim_mode == "request":
         sim["fleet"] = fleet
@@ -667,7 +668,7 @@ def agent_team(body: TeamRequest):
     from .a2a import route, run_skill
     from .agent.team import coordinate
     run = coordinate(body.message, run_skill, route, via="CampusPulse app")
-    return {k: run[k] for k in ("message", "reply", "steps", "source", "skills", "ms", "at")} | {
+    return {k: run[k] for k in ("message", "reply", "steps", "source", "skills", "ms", "at", "activity")} | {
         "sql": run["data"].get("sql"), "plan_id": run["data"].get("plan_id")}
 
 
@@ -727,6 +728,15 @@ def ops_feed():
             "live_room": LIVE_ROOM, "ac_mode_live_room": control.mode(LIVE_ROOM)}
 
 
+@app.post("/api/ops/scan")
+def ops_scan():
+    """Ask the watcher to look at every room now; it opens an incident for the clearest problem it finds."""
+    out = ops.scan()
+    if out.get("opened"):
+        ops._ensure_worker()
+    return out
+
+
 class AutonomyRequest(BaseModel):
     on: bool
 
@@ -770,6 +780,14 @@ def ops_reset(body: ResetRequest):
     if body.room not in ROOM_BY_ID:
         raise HTTPException(422, "unknown room")
     ops._apply(body.room, "schedule", "reset", "reset from the dashboard", "Estates manager (reset)")
+    # Also take the room out of earlier approvals (Autopilot, Actions) for this session, so it is truly
+    # back on the building schedule and the agents can catch it again. The decision log is untouched.
+    with control.lock:
+        for aid, (mode, rooms) in list(control.by_action.items()):
+            if body.room in rooms:
+                control.by_action[aid] = (mode, [r for r in rooms if r != body.room])
+        control.policies.clear()
+        control.policies.update(control._recompute())
     with ops.lock:
         for k in [k for k in ops.closed_at if k[0] == body.room]:
             ops.closed_at.pop(k)

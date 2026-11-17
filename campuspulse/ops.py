@@ -36,7 +36,7 @@ log = logging.getLogger("campuspulse.ops")
 LIVE_DWELL_S = 20          # a node's room must look wrong for this long before the watcher speaks up
 SIM_INCIDENT_GAP_S = 600   # simulated rooms: at most one new incident every 10 minutes, campus-wide
 COOLDOWN_S = {"live": 60, "sim": 1800}
-VERIFY_AFTER_S = {"live": 15, "sim": 300}
+VERIFY_AFTER_S = {"live": 15, "sim": 15}  # simulated rooms are checked on their digital twin
 VERIFY_GIVE_UP_S = 900
 MAX_AUTO_CHANGES_PER_DAY = 20
 
@@ -69,6 +69,7 @@ class Ops:
         self.worker: threading.Thread | None = None
         self.run_trigger = None  # set by the API: fn(trigger: dict) -> None, runs the orchestrator
         self.manual = False      # tests: no background worker; call drain()
+        self.fleet = None        # the simulator, for the verifier's digital-twin check on simulated rooms
 
     # ---------------------------------------------------------------- incidents
     def get(self, iid: str) -> dict | None:
@@ -77,7 +78,8 @@ class Ops:
 
     def open_for(self, room: str, event: str | None = None) -> dict | None:
         with self.lock:
-            return next((i for i in self.incidents if i["room_id"] == room and i["status"] not in ("resolved", "escalated", "no_action")
+            return next((i for i in self.incidents if i["room_id"] == room and i["kind"] == "event"
+                         and i["status"] not in ("resolved", "escalated", "no_action")
                          and (event is None or i["event"] == event)), None)
 
     def step(self, inc: dict, agent: str, did: str, detail: str = "", ok: bool = True) -> None:
@@ -140,10 +142,10 @@ class Ops:
                 self.last_sim_incident = now
             self.open(room, event, r, dev, first)
 
-    def open(self, room: str, event: str, r: dict, dev: str, since: datetime | None = None) -> dict:
+    def open(self, room: str, event: str, r: dict, dev: str, since: datetime | None = None, note: str = "") -> dict:
         what = {"empty_cooled": "AC running with nobody in the room",
                 "stale_air": f"CO2 {round(float(r.get('co2_ppm') or 0))} ppm while occupied (limit {settings.co2_limit_ppm})"}[event]
-        inc = {"id": f"inc-{next(_ids)}", "room_id": room, "room_name": ROOM_BY_ID[room].name, "event": event,
+        inc = {"id": f"inc-{next(_ids)}", "kind": "event", "room_id": room, "room_name": ROOM_BY_ID[room].name, "event": event,
                "what": what, "device_id": dev, "source": "live node" if not dev.startswith("sim-") and not is_virtual(dev)
                else "virtual node" if is_virtual(dev) else "simulated room",
                "opened_at": _iso(_now()), "since": _iso(since), "status": "investigating", "steps": [],
@@ -151,10 +153,76 @@ class Ops:
         with self.lock:
             self.incidents.appendleft(inc)
         secs = round((_now() - since).total_seconds()) if since else 0
-        self.step(inc, "Watcher (rules)", f"spotted: {what}", f"{inc['source']} {dev}; condition held {secs} s")
+        self.step(inc, "Watcher (rules)", f"spotted: {what}",
+                  note or f"{inc['source']} {dev}; condition held {secs} s")
         self.queue.put({"kind": "event", "incident": inc["id"]})
         self._ensure_worker()
         return inc
+
+    def open_request(self, message: str, via: str) -> dict:
+        """A person's request: logged like an incident, so the activity map shows it too."""
+        rec = {"id": f"run-{next(_ids)}", "kind": "request", "room_id": None, "room_name": None, "event": "request",
+               "what": message[:200], "device_id": None, "source": via, "opened_at": _iso(_now()), "since": None,
+               "status": "working", "steps": [], "note": None, "proposal": None, "check": None, "closed_at": None,
+               "orchestrated_by": None}
+        with self.lock:
+            self.incidents.appendleft(rec)
+        self.step(rec, "Person", f"asked via {via}", message[:200])
+        return rec
+
+    def finish_request(self, rec: dict, reply: str, source: str) -> None:
+        with self.lock:
+            rec["note"], rec["orchestrated_by"], rec["status"] = reply, source, "done"
+            rec["closed_at"] = _iso(_now())
+
+    def scan(self) -> dict:
+        """The watcher, on demand: look at every room's latest reading now and open an incident for the
+        clearest problem (same rules as on each reading, without the campus-wide rate limit)."""
+        from . import analytics
+        from .store import get_store
+        states = analytics.room_states(get_store())
+        local = datetime.now(settings.timezone)
+        mins = local.hour * 60 + local.minute
+
+        def booked(rid):
+            return any(s.start_min <= mins < s.end_min for s in slots_for(rid, local.weekday()))
+
+        empty = [r for r in states if r.get("ac_on") and not r.get("occupied") and r["status"] != "offline"
+                 and control.mode(r["room_id"]) != "occupancy" and not self.open_for(r["room_id"])]
+        stale = [r for r in states if r.get("occupied") and (r.get("co2_ppm") or 0) > settings.co2_limit_ppm
+                 and not self.open_for(r["room_id"])]
+        pick, event = None, None
+        if empty:
+            empty.sort(key=lambda r: (booked(r["room_id"]), -ROOM_BY_ID[r["room_id"]].ac_kw))
+            pick, event = empty[0], "empty_cooled"
+        elif stale:
+            stale.sort(key=lambda r: -(r.get("co2_ppm") or 0))
+            pick, event = stale[0], "stale_air"
+        if pick is None:
+            return {"opened": None, "why": "No room needs attention right now: no AC running in an empty room and no "
+                                           "CO2 over the limit. Try during teaching hours (07:30-21:00 on weekdays)."}
+        row = {"room_id": pick["room_id"], "occupied": pick.get("occupied"), "ac_on": pick.get("ac_on"),
+               "co2_ppm": pick.get("co2_ppm")}
+        inc = self.open(pick["room_id"], event, row, pick.get("device_id") or "sim", None,
+                        note=f"scan requested from the dashboard; {len(empty)} rooms cooled while empty, "
+                             f"{len(stale)} with CO2 over the limit")
+        return {"opened": inc["id"], "room_id": pick["room_id"], "event": event}
+
+    def room_history(self, room: str) -> dict:
+        from .store import get_store
+        if room not in ROOM_BY_ID:
+            return {"error": f"unknown room {room}"}
+        df = get_store().query(f"""
+            SELECT hour_of_day,
+                   SUM(IF(ac_on_frac >= 0.5 AND COALESCE(max_people, 0) = 0 AND occupied_frac = 0, 1, 0)) AS empty_cooled,
+                   SUM(IF(occupied_frac > 0 AND max_co2_ppm > {settings.co2_limit_ppm}, 1, 0)) AS stale_air
+            FROM v_room_hourly
+            WHERE room_id = '{room}' AND hour >= DATETIME_SUB((SELECT MAX(hour) FROM v_room_hourly), INTERVAL 7 DAY)
+            GROUP BY hour_of_day ORDER BY hour_of_day""")
+        ec, sa = int(df["empty_cooled"].sum()) if len(df) else 0, int(df["stale_air"].sum()) if len(df) else 0
+        worst = df.sort_values("empty_cooled", ascending=False).head(3) if len(df) else df
+        return {"room_id": room, "days": 7, "empty_cooled_hours": ec, "stale_air_hours": sa,
+                "worst_empty_cooled_hours_of_day": [int(h) for h in worst["hour_of_day"]] if ec else []}
 
     # ---------------------------------------------------------------- tools the orchestrator calls
     def inspect_room(self, room: str) -> dict:
@@ -193,7 +261,7 @@ class Ops:
     def recent_incidents(self, n: int = 8) -> list[dict]:
         with self.lock:
             return [{k: i.get(k) for k in ("id", "room_id", "event", "what", "status", "opened_at", "note")}
-                    for i in list(self.incidents)[:n]]
+                    for i in list(self.incidents) if i["kind"] == "event"][:n]
 
     def set_ac_mode(self, inc: dict | None, room: str, mode: str, reason: str, by: str) -> dict:
         """POLICY GUARD (rules): the orchestrator asks; this decides whether it happens now or waits for a person."""
@@ -299,6 +367,33 @@ class Ops:
             self.queue.put({"kind": "verification", "incident": inc["id"]})
             self._ensure_worker()
 
+    def verify_due(self) -> None:
+        """Simulated rooms: when a check falls due, re-run the room's digital twin (the simulator) with the
+        new AC mode, instead of waiting five minutes for its next reading."""
+        if self.fleet is None:
+            return
+        now = _now()
+        with self.lock:
+            due = [i for i in self.incidents if i.get("check") and i["check"]["result"] is None
+                   and i["source"] == "simulated room" and now >= datetime.fromisoformat(i["check"]["due"])]
+        for inc in due:
+            room = ROOM_BY_ID[inc["room_id"]]
+            local = datetime.now(settings.timezone)
+            if inc["check"]["expect"] == "ac_off":
+                on = self.fleet._ac_on(room, local, 0)
+                passed = not on
+                booked = any(s.start_min / 60 - 1 <= local.hour + local.minute / 60 < s.end_min / 60
+                             for s in slots_for(room.room_id, local.weekday()))
+                seen = (f"digital twin re-run with AC mode '{control.mode(room.room_id)}': AC "
+                        + ("off" if passed else "still on" + (" (a class is booked, so occupancy mode keeps cooling)" if booked else "")))
+            else:
+                passed, seen = False, "CO2 can only be checked on the room's next reading"
+            with self.lock:
+                inc["check"]["result"] = "passed" if passed else "failed"
+                inc["check"]["seen"] = seen
+            self.step(inc, "Verifier (rules)", "check passed" if passed else "check failed", seen, ok=passed)
+            self.queue.put({"kind": "verification", "incident": inc["id"]})
+
     def sweep(self) -> None:
         """Give up on checks whose room went silent, so nothing waits forever."""
         now = _now()
@@ -324,9 +419,13 @@ class Ops:
     def _work(self) -> None:
         while True:
             try:
-                trigger = self.queue.get(timeout=30)
+                trigger = self.queue.get(timeout=3)
             except queue.Empty:
-                self.sweep()
+                try:
+                    self.verify_due()
+                    self.sweep()
+                except Exception:
+                    log.exception("verifier sweep failed")
                 continue
             try:
                 if self.run_trigger:
@@ -342,6 +441,7 @@ class Ops:
         """Tests: run queued triggers on this thread until the queue is empty."""
         end = time.time() + timeout
         while time.time() < end:
+            self.verify_due()
             try:
                 trigger = self.queue.get_nowait()
             except queue.Empty:

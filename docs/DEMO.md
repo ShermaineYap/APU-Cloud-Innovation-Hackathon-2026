@@ -1,5 +1,7 @@
 # CampusPulse demo guide (3 minutes)
 
+> For the finals, use [TEST_AND_DEMO_GUIDE.md](TEST_AND_DEMO_GUIDE.md): it has the agent loop, the real board and the full 7-minute script. This file is the older 3-minute Wokwi demo.
+
 **One line:** CampusPulse plans APU's rooms and air-conditioning for the next teaching day, proves the saving,
 and switches the AC when Estates approves.
 

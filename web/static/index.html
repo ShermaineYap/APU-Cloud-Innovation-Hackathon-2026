@@ -20,6 +20,7 @@
     <nav class="tabs" role="tablist" aria-label="Sections">
       <button type="button" role="tab" data-tab="today" aria-selected="true">Today</button>
       <button type="button" role="tab" data-tab="autopilot" aria-selected="false">Autopilot <span class="new">plan</span></button>
+      <button type="button" role="tab" data-tab="orchestrator" aria-selected="false">Orchestrator <span class="new">live</span></button>
       <button type="button" role="tab" data-tab="agents" aria-selected="false">Agents <span class="new">team</span></button>
       <button type="button" role="tab" data-tab="actions" aria-selected="false">Actions <span class="count" id="actions-count" hidden></span></button>
       <button type="button" role="tab" data-tab="students" aria-selected="false">Students</button>
@@ -49,20 +50,6 @@
           <p class="hint">Autopilot forecasts every class, re-assigns rooms with an optimiser, schedules the AC from the weather forecast and checks comfort. You set the goals and approve.</p>
         </div>
         <button type="button" class="solid big" data-goto="autopilot">Open Autopilot →</button>
-      </div>
-
-      <div class="agent-feed" id="agent-feed" aria-labelledby="feed-title">
-        <div class="source-head">
-          <div>
-            <h2 id="feed-title">Agents on duty</h2>
-            <p class="hint">The watcher reads every sensor message. When a room looks wrong, the Gemini orchestrator investigates, acts through the policy guard, and the verifier checks it worked. No one has to ask.</p>
-          </div>
-          <div class="feed-controls">
-            <label class="switch"><input type="checkbox" id="autonomy" checked> <span>Autonomy on</span></label>
-            <button type="button" class="ghost" id="feed-reset" title="Put the live room back on the building schedule so the agents can catch it again">Reset <span id="feed-room">B-08-05</span> AC</button>
-          </div>
-        </div>
-        <div id="feed-list" class="feed-list" aria-live="polite"><p class="hint">Watching… nothing needs attention yet.</p></div>
       </div>
 
       <div class="source-card" id="source-card" aria-labelledby="source-title">
@@ -219,12 +206,38 @@
       <ol id="study" class="study-list"></ol>
     </section>
 
+    <!-- ORCHESTRATOR: the agents at work, live -->
+    <section class="tab-panel" data-panel="orchestrator" role="tabpanel" aria-labelledby="orch-title" hidden>
+      <div class="section-head">
+        <h2 id="orch-title">The orchestrator at work</h2>
+        <p class="hint">One Gemini orchestrator directs a team of agents. When the watcher spots a problem or a person asks something, watch who it calls, in what order, and what each one did. Blue = Gemini agent, grey = rules, green = the room.</p>
+      </div>
+      <div class="orch-bar">
+        <button type="button" class="solid" id="orch-scan">Scan campus now</button>
+        <button type="button" class="ghost" id="orch-ask-done">Ask: what have you handled today?</button>
+        <button type="button" class="ghost" id="orch-ask-why">Ask: why is Auditorium 2 wasting energy?</button>
+        <label class="switch"><input type="checkbox" id="autonomy" checked> <span>Autonomy on</span></label>
+      </div>
+      <div class="orch-stage">
+        <svg id="orch-map" class="orch-map" viewBox="0 0 900 450" role="img" aria-label="Live map of the orchestrator and its agents"></svg>
+        <div class="orch-now" aria-live="polite">
+          <p class="orch-caption" id="orch-caption">Waiting for something to happen…</p>
+          <ol class="orch-ticker" id="orch-ticker"></ol>
+        </div>
+      </div>
+      <div class="section-head">
+        <h3>Activity</h3>
+        <p class="hint">Every event and request the orchestrator handled. Press Replay on any of them to watch it again on the map.</p>
+      </div>
+      <div id="feed-list" class="feed-list" aria-live="polite"><p class="hint">Watching every reading… nothing needs attention yet.</p></div>
+    </section>
+
     <!-- AGENTS: the team, their prompts, and what they just did -->
     <section class="tab-panel" data-panel="agents" role="tabpanel" aria-labelledby="team-title" hidden>
       <div class="team-ask">
         <div class="section-head">
           <h2 id="team-title">Ask the agent team</h2>
-          <p class="hint">The orchestrator decides which specialists and tools to call, in what order. Every step shows below. The same orchestrator handles sensor events on the Today tab.</p>
+          <p class="hint">The orchestrator decides which specialists and tools to call, in what order. Every step shows below. The same orchestrator handles sensor events: watch it on the Orchestrator tab.</p>
         </div>
         <form id="team-form" class="ask-form">
           <label for="team-q" class="visually-hidden">Request for the agent team</label>

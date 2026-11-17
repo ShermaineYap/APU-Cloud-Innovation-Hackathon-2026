@@ -75,6 +75,11 @@ def test_live_board_closes_the_loop_without_a_person():
         assert not ops.open_for(ROOM, "empty_cooled")
         c.post("/api/ops/reset", json={"room": ROOM})
         assert control.mode(ROOM) == "schedule"
+        # reset also undoes a campus-wide approval that covered the room (Autopilot, Actions)
+        control.apply({"id": "blk-b", "kind": "occupancy_linked_ac", "rooms": [ROOM, "B-08-03"], "title": "t"}, "approved")
+        assert control.mode(ROOM) == "occupancy"
+        c.post("/api/ops/reset", json={"room": ROOM})
+        assert control.mode(ROOM) == "schedule" and control.mode("B-08-03") == "occupancy"
 
 
 def test_guard_holds_a_risky_change_until_a_person_approves():
@@ -93,19 +98,30 @@ def test_guard_holds_a_risky_change_until_a_person_approves():
         c.post("/api/ops/reset", json={"room": ROOM})
 
 
-def test_orchestrator_runs_an_event_with_gemini_tools(monkeypatch):
+def test_orchestrator_directs_its_agents_on_an_event(monkeypatch):
+    """Scripted Gemini: the orchestrator delegates to the Investigator, Controller, Verifier and Reporter,
+    and each agent runs its own tools."""
     from types import SimpleNamespace
 
     from campuspulse.agent import gemini, team
-    ops.manual = True
-    turns = iter([[("inspect_room", {"room_id": ROOM})],
-                  [("set_ac_mode", {"room_id": ROOM, "mode": "occupancy", "reason": "empty, no class"}),
-                   ("schedule_check", {"room_id": ROOM, "expect": "ac_off"})],
-                  [("close_incident", {"outcome": "acted", "note": f"{ROOM} was cooled while empty; switched to occupancy."})]])
+    turns = iter([
+        [("investigator", {"room_id": ROOM})],                                 # orchestrator
+        [("inspect_room", {"room_id": ROOM})],                                 # investigator agent
+        "Room is empty with the AC on. Recommend: switch the AC to follow occupancy.",
+        [("controller", {"room_id": ROOM, "instruction": "Switch to occupancy: empty, AC on."})],  # orchestrator
+        [("set_ac_mode", {"room_id": ROOM, "mode": "occupancy", "reason": "empty, AC on"})],        # controller agent
+        "The policy guard applied occupancy mode.",
+        [("verifier", {"room_id": ROOM, "expect": "ac_off"}), ("reporter", {})],  # orchestrator
+        "AC was running in an empty room; switched to occupancy mode, check pending.",  # reporter agent
+        [("close_incident", {"outcome": "acted"})],                            # orchestrator
+    ])
 
     def generate(client, retries=3, **kw):
         from google.genai import types
-        calls = [SimpleNamespace(name=n, args=a) for n, a in next(turns)]
+        t = next(turns)
+        if isinstance(t, str):
+            return SimpleNamespace(function_calls=[], text=t, candidates=[])
+        calls = [SimpleNamespace(name=n, args=a) for n, a in t]
         return SimpleNamespace(function_calls=calls, text="", candidates=[SimpleNamespace(
             content=types.Content(role="model", parts=[types.Part(text="calling")]))])
 
@@ -115,14 +131,26 @@ def test_orchestrator_runs_an_event_with_gemini_tools(monkeypatch):
     object.__setattr__(team.settings, "gemini_api_key", "test")
     try:
         with TestClient(api.app) as c:
-            c.post("/api/ops/reset", json={"room": ROOM})
             c.post("/api/ingest", json=board(), headers=H)
             inc = ops.open(ROOM, "empty_cooled", board(), "esp32-b0805")
             ops.drain()
             assert inc["status"] == "verifying" and control.mode(ROOM) == "occupancy"
-            assert inc["orchestrated_by"].startswith("Gemini orchestrator")
-            dids = " | ".join(s["did"] for s in inc["steps"])
-            assert "inspected B-08-05" in dids and "decided: AC" in dids and "approved" in dids
-            c.post("/api/ops/reset", json={"room": ROOM})
+            agents = [s["agent"] for s in inc["steps"]]
+            for who in ("Watcher (rules)", "Orchestrator", "Investigator", "Controller", "Policy guard (rules)",
+                        "Device command", "Verifier (rules)", "Reporter", "Checker"):
+                assert who in agents, who
+            assert agents.index("Investigator") < agents.index("Controller") < agents.index("Reporter")
+            assert inc["note"].startswith("AC was running")
     finally:
         object.__setattr__(team.settings, "gemini_api_key", saved)
+
+
+def test_scan_finds_a_real_problem_and_requests_show_in_the_feed():
+    with TestClient(api.app) as c:
+        out = c.post("/api/ops/scan").json()
+        assert out.get("opened") or "No room needs attention" in out["why"]
+        r = c.post("/api/agent", json={"message": "Give me the morning brief"}).json()
+        feed = c.get("/api/ops").json()["incidents"]
+        req = next(i for i in feed if i["id"] == r["activity"])
+        assert req["kind"] == "request" and req["status"] == "done"
+        assert [s["agent"] for s in req["steps"]][:2] == ["Person", "Orchestrator"]

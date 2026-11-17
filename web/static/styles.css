@@ -532,3 +532,51 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .ops-trace li.bad b { color: var(--bad); }
 .ops-trace .t { color: var(--muted); font-size: 0.78rem; margin-right: 0.4rem; font-variant-numeric: tabular-nums; }
 .ops-trace small { display: block; color: var(--muted); font-size: 0.8rem; overflow-wrap: anywhere; }
+
+/* ---------- orchestrator tab: live agent map ---------- */
+.orch-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0.5rem 0 1rem; }
+.orch-bar .switch { margin-left: auto; }
+.orch-stage { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 1rem; align-items: start;
+  background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius-ui); padding: 0.75rem; margin-bottom: 1.5rem; }
+.orch-map { width: 100%; height: auto; display: block; }
+.orch-map .edge { stroke: var(--rule); stroke-width: 2; transition: stroke 0.3s, stroke-width 0.3s; }
+.orch-map .edge.visited { stroke: #9FB3C8; }
+.orch-map .edge.active { stroke: var(--cooled); stroke-width: 4; }
+.orch-map .node .body { fill: #fff; stroke: var(--rule); stroke-width: 2; transition: fill 0.3s, stroke 0.3s; }
+.orch-map .node .halo { fill: none; stroke: none; }
+.orch-map .node .lbl { font: 600 13px var(--body); fill: var(--ink); text-anchor: middle; }
+.orch-map .node .sub { font: 400 10px var(--body); fill: var(--muted); text-anchor: middle; }
+.orch-map .node.k-hub .body { fill: var(--ink); stroke: var(--ink); }
+.orch-map .node.k-hub .lbl { fill: #fff; font-size: 15px; }
+.orch-map .node.k-hub .sub { fill: #C9D1CC; }
+.orch-map .node.k-llm .body { stroke: var(--cooled); }
+.orch-map .node.k-rule .body { stroke: var(--muted); stroke-dasharray: 4 3; }
+.orch-map .node.k-device .body { stroke: var(--in-use); }
+.orch-map .node.k-person .body { stroke: var(--warn); }
+.orch-map .node.visited .body { fill: #EEF3F8; }
+.orch-map .node.k-hub.visited .body { fill: var(--ink); }
+.orch-map .node.active .body { fill: var(--cooled); stroke: var(--cooled); }
+.orch-map .node.k-rule.active .body { fill: var(--muted); stroke: var(--muted); }
+.orch-map .node.k-device.active .body { fill: var(--in-use); stroke: var(--in-use); }
+.orch-map .node.k-person.active .body { fill: var(--warn); stroke: var(--warn); }
+.orch-map .node.k-hub.active .body { fill: #2C5A8C; stroke: #2C5A8C; }
+.orch-map .node.active .lbl, .orch-map .node.active .sub { fill: #fff; }
+.orch-map .node.active .halo { stroke: var(--cooled); stroke-width: 3; opacity: 0.35; animation: orch-pulse 1s ease-out infinite; }
+.orch-map .node.bad .body { stroke: var(--bad); }
+.orch-map .token { fill: var(--cooled); }
+@keyframes orch-pulse { from { opacity: 0.5; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .orch-map .node.active .halo { animation: none; } }
+.orch-now { display: grid; gap: 0.5rem; min-width: 0; }
+.orch-caption { margin: 0; font-size: 1.05rem; min-height: 2.6em; }
+.orch-ticker { list-style: none; margin: 0; padding: 0 0 0 0.9rem; border-left: 2px solid var(--rule); display: grid; gap: 0.35rem; }
+.orch-ticker li { position: relative; font-size: 0.88rem; animation: orch-in 0.35s ease-out; }
+.orch-ticker li::before { content: ""; position: absolute; left: -1.27rem; top: 0.45rem; width: 0.6rem; height: 0.6rem; border-radius: 50%;
+  background: var(--muted); border: 2px solid #fff; }
+.orch-ticker li.k-llm::before { background: var(--cooled); }
+.orch-ticker li.k-device::before { background: var(--in-use); }
+.orch-ticker li.k-person::before { background: var(--warn); }
+.orch-ticker .t { color: var(--muted); font-size: 0.75rem; margin-right: 0.35rem; }
+.orch-ticker small { display: block; color: var(--muted); font-size: 0.78rem; overflow-wrap: anywhere; }
+@keyframes orch-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.incident summary .replay-btn { font-size: 0.82rem; }
+@media (max-width: 860px) { .orch-stage { grid-template-columns: 1fr; } .orch-bar .switch { margin-left: 0; } }

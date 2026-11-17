@@ -1,76 +1,73 @@
 # The agent workflow
 
-One **Gemini orchestrator** runs CampusPulse. Everything reaches it: a person's request, an event
-from the sensors, and the result of a check after it acted. It decides which specialist agent or
-tool to call, in what order, and closes the loop. Three rule-based parts (no LLM) keep it honest:
-the **watcher** decides when to wake it, the **policy guard** decides whether its changes happen,
-and the **verifier** decides whether they worked.
+CampusPulse is run by **one Gemini orchestrator that directs a team of agents**. The orchestrator never
+does the work itself. For every input (a person's request, an event from the watcher, a verifier's result)
+it decides which agent works next and briefs each one with the previous one's result. Each agent has its own
+Gemini prompt and its own tools. Three rule components (no LLM) keep the team honest:
+- the **watcher** decides when to wake the orchestrator;
+- the **policy guard** decides whether a change happens;
+- the **verifier** decides whether it worked.
+
+Watch it live on the **Orchestrator** tab: a map of the team that lights up as each agent works, a step
+ticker, and the activity log with **Replay**.
 
 ```
-                    ┌──────────────── people ─────────────────┐
-                    │ Agents tab · Gemini Enterprise (A2A)    │
-                    └───────────────────┬─────────────────────┘
-                                        │ request
-sensor readings ──► WATCHER (rules) ──event──► ┌──────────────────────────────┐
-(ESP32, Wokwi,        AC on, nobody in         │   ORCHESTRATOR (Gemini)      │
- simulator)           CO2 over limit           │   function calling, ≤6 turns │
-                                               └──┬───────────────────────────┘
-          specialist agents                       │ tools
-          ├─ SQL analyst (Gemini, self-correcting SQL)       ├─ inspect_room   (live state, timetable, trust, 7-day history)
-          ├─ Brief writer (Gemini + checker)                 ├─ recent_incidents
-          └─ Planner: goal reader → optimiser → twin →       ├─ set_ac_mode ──► POLICY GUARD (rules)
-             explainer (Gemini + solver)                     │                    ├─ safe → device command (MQTT / HTTPS) → the room obeys
-                                                             │                    └─ risky → held: a person approves in the feed
-                                                             ├─ schedule_check ─► VERIFIER (rules): re-reads the room
-                                                             │                    └─ result goes back to the orchestrator
-                                                             ├─ flag_for_estates
-                                                             └─ close_incident ─► CHECKER: no figure the tools didn't give
+ sensor readings ─► WATCHER (rules) ─event─┐            ┌── people (Agents tab, Orchestrator tab, A2A)
+                                           ▼            ▼
+                              ┌──────────────────────────────────┐
+                              │  ORCHESTRATOR (Gemini)           │  decides who works, in what order
+                              └──┬───────┬───────┬───────┬──────┬┘
+            ┌────────────────────┘       │       │       │      └──────────────┐
+            ▼                            ▼       ▼       ▼                     ▼
+   INVESTIGATOR (Gemini)        SQL ANALYST  PLANNER  BRIEF WRITER     REPORTER (Gemini)
+   tools: inspect_room,         (Gemini,     (goal reader → optimiser   writes the log note
+          room_history          self-fixing   → digital twin →
+                                SQL)          explainer)
+            ▼
+   CONTROLLER (Gemini) ── set_ac_mode ──► POLICY GUARD (rules) ──safe──► ROOM / AC (command)
+   the only agent that can act              └── risky ──► held: a person approves
+            ▼
+   VERIFIER (rules): re-reads the room (live node) or re-runs its digital twin (simulated room)
+            └── result goes back to the ORCHESTRATOR → Reporter → close
+   CHECKER (rules) sits behind every Gemini agent: no figure that its tools didn't supply.
 ```
 
-## One incident, step by step (what the feed shows)
+## One incident, as the map shows it (measured live with Gemini)
 
-Measured on the real loop with Gemini, playing the ESP32 in B-08-05:
-
-| Time | Who | What |
+| ~Time | Who | What |
 |---|---|---|
-| 0 s | Presenter | Presses BOOT: B-08-05 is now **empty**, AC still on (building schedule) |
-| 20 s | Watcher (rules) | Condition held 20 s → opens an incident, wakes the orchestrator |
-| 22 s | Orchestrator | `inspect_room`: empty, AC on, sensor trust 100, *class booked now (10:45–12:45) but nobody in* |
-| 24 s | Orchestrator | Decides: a no-show, so set AC to **occupancy** mode, with that reason |
-| 24 s | Policy guard | Room empty, sensor trusted, under the daily limit → **approved**, command sent |
-| ~29 s | ESP32 | Pulls the command (every 5 s): **the blue LED goes off** |
-| 25 s | Orchestrator | `schedule_check`: expects the AC off |
-| ~40 s | Verifier | Board's next reading says AC off → **check passed** → back to the orchestrator |
-| ~45 s | Orchestrator | Closes the incident: "resolved", note checked by the checker |
+| 0 s | Watcher (rules) | *Scan campus now*: 4 rooms cooled while empty → opens an incident for AUD-4 |
+| 2 s | Orchestrator | Delegates to the **Investigator**: "Is the AC running with nobody in, and is it safe to turn off?" |
+| 4 s | Investigator | `inspect_room` (empty, AC on, next class 13:30, sensor trust 100) and `room_history` (34 empty-cooled hours in 7 days) → **Checker** ✓ → reports and recommends |
+| 8 s | Orchestrator | Delegates to the **Controller**: "Turn off the AC: empty, no class until 13:30" |
+| 10 s | Controller | `set_ac_mode` occupancy → **Policy guard** approves (empty, trusted) → command to the room |
+| 12 s | Orchestrator | Asks the **Verifier** to check, and the **Reporter** for a note |
+| 30 s | Verifier | Digital twin re-run with the new mode: AC off → **passed** → back to the Orchestrator |
+| 45 s | Orchestrator | Reporter writes the final note → **Resolved** |
 
-Press BOOT again (occupied): in occupancy mode the LED comes straight back on. That's the comfort side.
-**Reset B-08-05 AC** in the feed puts the room back on the building schedule, so you can show it again.
+On its own, the watcher also catches problems between scans (at most one new incident every 10 minutes for
+simulated rooms; immediately for live or virtual nodes). With high CO2 in a full classroom, the orchestrator
+does not touch the AC: the Investigator reports, the Reporter flags it for Estates, and it is marked **Escalated**.
 
 ## What the guard holds for a person
 
-Less cooling needs all of these: the room is empty, its sensor is trusted (confidence ≥ 80), autonomy
-is on, and fewer than 20 automatic changes today. Otherwise the incident shows **Needs you** with
-Approve and Dismiss buttons. More cooling (back to the schedule) is always allowed. Untick
-**Autonomy on** to show that every change then waits for a person.
+Less cooling needs all of these: the room is empty, its sensor is trusted (confidence ≥ 80), autonomy is
+on, and fewer than 20 automatic changes today. Otherwise the activity shows **Needs you** with Approve and
+Dismiss. More cooling is always allowed.
 
 ## Prompting
 
-- **One system prompt** (`ORCH_SYSTEM` in `campuspulse/agent/team.py`, visible in the Agents tab) with
-  separate rules for a REQUEST, an EVENT and a VERIFICATION, so one agent behaves correctly in all three.
-- **Tools, not memory**: the orchestrator never states a figure on its own; every number comes from a
-  tool result, and the checker rejects anything else (one rewrite, then the tools' own words).
-- **Decisions carry evidence**: `set_ac_mode` requires a one-sentence reason, shown in the log.
-- **Fixed action menu**: the orchestrator can only call declared tools with enum-checked arguments.
-- **Fallback**: with Gemini off or failing, a rule playbook runs the same tools in a fixed order, so the
-  loop still closes, and the feed says which one ran.
+- **Each agent has its own prompt** (visible in the Agents tab): Orchestrator (`ORCH_SYSTEM`, with separate
+  rules for a REQUEST, an EVENT and a VERIFICATION), Investigator, Controller, Reporter, plus the existing SQL
+  analyst, goal reader, plan explainer, brief and notice writers.
+- **Delegation, not memory**: the orchestrator's tools *are* the agents; it never states a figure itself.
+- **Least privilege**: only the Controller can ask for a change, and only through the guard.
+- **Evidence travels**: the Investigator's findings brief the Controller; the Controller must give a reason;
+  the Reporter writes from the recorded facts.
+- **Generator and critic**: every agent's words go to the checker; a failed check falls back to rules.
+- **Fallback**: with Gemini off, the orchestrator follows a fixed playbook over the same agents' rule versions.
 
-## Try it
+## API
 
-- **Live board**: flash `firmware/campuspulse_board` (it starts "occupied"), then press BOOT.
-- **Without a board**: the Wokwi node or `edge/virtual_node.py` trigger the same loop (labelled virtual).
-- **Ask about it**: in the Agents tab, "What have you handled on campus today, and is anything waiting for me?"
-- **API**: `GET /api/ops` (the feed), `POST /api/ops/autonomy`, `POST /api/ops/incidents/<id>/approve|dismiss`,
-  `POST /api/ops/reset`.
-
-Simulated rooms are watched too, rate-limited to one new incident every 10 minutes campus-wide
-(`CP_AGENT_WATCH_SIM=false` turns that off), so the feed shows the agents working across campus.
+`GET /api/ops` (activity and steps) · `POST /api/ops/scan` · `POST /api/ops/autonomy` ·
+`POST /api/ops/incidents/<id>/approve|dismiss` · `POST /api/agent` (a request to the orchestrator).

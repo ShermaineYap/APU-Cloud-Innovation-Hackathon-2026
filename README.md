@@ -39,7 +39,7 @@ On the demo data a typical teaching day saves about **40% of cooling energy** an
 
 ## The agent team
 
-CampusPulse is a team of agents run by **one Gemini orchestrator**. It handles everything: people's requests (the Agents tab, Gemini Enterprise over A2A) and events from the sensors. Nobody has to ask: the **Agents on duty** feed on the Today tab shows the loop working by itself. Full workflow: [docs/AGENT_WORKFLOW.md](docs/AGENT_WORKFLOW.md).
+CampusPulse is a team of agents run by **one Gemini orchestrator**. It handles everything: people's requests (the Agents tab, Gemini Enterprise over A2A) and events from the sensors. It delegates to specialist agents (Investigator, Controller, Reporter, SQL analyst, Planner, Brief writer), each with its own prompt and tools. The **Orchestrator** tab shows a live map of the team at work. Full workflow: [docs/AGENT_WORKFLOW.md](docs/AGENT_WORKFLOW.md).
 
 ```
 sensor reading ─► Watcher (rules) ─event─► ORCHESTRATOR (Gemini, function calling)
